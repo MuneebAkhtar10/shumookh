@@ -125,10 +125,24 @@ async function main() {
   const admin = await upsertPerson(
     adminEmail,
     process.env.SEED_ADMIN_PASSWORD ?? "admin123",
-    { userType: UserType.super_admin, firstName: "Site", lastName: "Admin" },
+    { userType: UserType.admin, firstName: "Site", lastName: "Admin" },
   );
 
   console.log(`✅ admin: ${admin.email}`);
+
+  // The one account that can open Permissions and grant admins their modules.
+  const superAdminEmail = (
+    process.env.SEED_SUPERADMIN_EMAIL ?? "superadmin@shumookh.com"
+  )
+    .trim()
+    .toLowerCase();
+  const superAdmin = await upsertPerson(
+    superAdminEmail,
+    process.env.SEED_SUPERADMIN_PASSWORD ?? "superadmin123",
+    { userType: UserType.super_admin, firstName: "Super", lastName: "Admin" },
+  );
+
+  console.log(`✅ super admin: ${superAdmin.email}`);
 
   // ── Property types ───────────────────────────────────────────────────────
   const apartmentType = await prisma.propertyType.upsert({

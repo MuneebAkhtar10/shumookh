@@ -98,17 +98,23 @@ export function AppNav({
             onClick={onNavigate}
             title={collapsed ? item.label : undefined}
             className={cn(
-              "inline-flex items-center whitespace-nowrap font-medium transition-colors",
+              "relative inline-flex items-center whitespace-nowrap font-medium transition-colors",
               isVertical
-                ? "gap-2.5 rounded-md px-2.5 py-1.5 text-[13px]"
+                ? "gap-2.5 rounded-lg px-3 py-1.5 text-sm"
                 : "gap-1.5 rounded-lg px-3 py-2 text-sm",
-              collapsed && "lg:mx-auto lg:h-9 lg:w-9 lg:justify-center lg:gap-0 lg:px-0 lg:py-0",
+              collapsed && "lg:mx-auto lg:h-10 lg:w-10 lg:justify-center lg:gap-0 lg:px-0 lg:py-0",
               isActive
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
           >
-            {Icon && <Icon className="h-4 w-4 shrink-0" />}
+            {/* A left accent bar reads as a stronger "you are here" marker
+             * than the tinted fill alone — skipped when collapsed, where
+             * the button is centered in a square icon slot instead. */}
+            {isVertical && isActive && !collapsed && (
+              <span className="absolute inset-y-1 -left-1 w-[3px] rounded-full bg-primary lg:block" />
+            )}
+            {Icon && <Icon className="h-[18px] w-[18px] shrink-0" />}
             <span className={cn(collapsed && "lg:hidden")}>{item.label}</span>
             {/* Always takes up layout space (just invisible until pending) —
              * hidden outright when collapsed instead, since a couple of

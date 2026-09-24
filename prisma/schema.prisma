@@ -39,6 +39,24 @@ enum AdminModule {
   qr_code
   dynamics
   settings
+  prop_building_contracts
+  prop_tenancy_terms
+  prop_tenant_report
+  prop_owner_report
+  prop_landlord_statement
+  prop_services_invoice
+  prop_annual_budget
+  prop_building_expenses
+  prop_management_report
+  prop_suppliers
+  prop_expenses
+  prop_rent_position
+  prop_rent_summary
+  prop_invoices
+  prop_unit_ledgers
+  prop_service_charge
+  prop_collection_position
+  prop_cash_flow
 }
 
 /// Only meaningful when userType = worker. Distinguishes staff employed by
@@ -152,6 +170,16 @@ enum EntityDocumentCategory {
   /// this is the internal document assigning the slot and registering the
   /// tenant's car against their unit.
   parking_agreement
+  /// Building-level safety certificate — renewed on a fixed cycle.
+  fire_certificate
+  /// Pest control / refuse collection contracts — building-level, or
+  /// tenant-level where the tenant holds their own.
+  pest_control_agreement
+  refuse_collection_agreement
+  /// Owners' association agreement, signed every 2 years.
+  oa_agreement
+  ministry_housing_agreement
+  sales_purchase_agreement
   other
 }
 
@@ -828,10 +856,16 @@ model Expense {
   receiptFilePath  String?          @map("receipt_file_path")
   receiptFileType  String?          @map("receipt_file_type")
   receiptFileSize  Int?             @map("receipt_file_size")
+  /// The invoice this expense was billed on, if any. Set when an invoice is
+  /// generated from existing expenses, or when an invoice with brand-new
+  /// lines creates its own expense entries — so Expenses and Invoices stay
+  /// in sync and an expense is never billed twice.
+  invoiceId        String?          @map("invoice_id") @db.Uuid
   createdById      String?          @map("created_by") @db.Uuid
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
+  invoice   ServiceChargeInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   property  Property?           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   category  ExpenseCategoryType @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   supplier  Supplier?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
@@ -849,6 +883,7 @@ model Expense {
   @@index([categoryId])
   @@index([supplierId])
   @@index([fundId])
+  @@index([invoiceId])
   @@map("expenses")
 }
 
@@ -946,6 +981,7 @@ model ServiceChargeInvoice {
   createdBy   User?                         @relation("ServiceChargeInvoiceCreator", fields: [createdById], references: [id], onDelete: SetNull)
   lines       ServiceChargeInvoiceLine[]
   installmentPlans ServiceChargeInstallmentPlan[]
+  expenses    Expense[]
 
   @@index([unitId, issueDate])
   @@map("service_charge_invoices")
@@ -1070,6 +1106,10 @@ model ServiceChargeInstallment {
   /// installment — set by the daily cron or the manual "Send invoice"
   /// button, whichever fires first, so it's never sent twice automatically.
   reminderSentAt DateTime? @map("reminder_sent_at")
+  /// The last reminder stage sent ("upcoming" 7 days out, "upcoming1" the
+  /// day before, "due", "overdue:N") so each stage goes out once and overdue
+  /// nudges daily.
+  reminderStage  String?   @map("reminder_stage")
 
   plan    ServiceChargeInstallmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   payment ServiceChargePayment?        @relation(fields: [paymentId], references: [id], onDelete: SetNull)
@@ -1467,6 +1507,10 @@ model WhatsappSession {
   /// The task a worker_task / awaiting_completion_code conversation is
   /// about.
   taskId    String?       @map("task_id") @db.Uuid
+  /// When this person last messaged us. WhatsApp only delivers free-form
+  /// (multi-line) messages within 24 hours of this; outside it, alerts must
+  /// use an approved template.
+  lastInboundAt DateTime? @map("last_inbound_at")
   updatedAt DateTime      @updatedAt @map("updated_at")
   createdAt DateTime      @default(now()) @map("created_at")
 

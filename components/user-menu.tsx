@@ -51,7 +51,7 @@ export function UserMenu({
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-muted",
+            "flex w-full items-center gap-2.5 rounded-lg border border-border/60 bg-muted/40 px-1.5 py-1.5 text-left transition-colors hover:bg-muted",
             collapsed && "lg:justify-center lg:px-0",
           )}
           aria-label="Account menu"

@@ -109,13 +109,9 @@ export function EntityDocumentManager({
    * modal or land on a page-level banner the modal itself covers up. Shows
    * the result right inside this component instead. */
   inline = false,
-  /** Overrides the default "tenancy documents always have a term" rule
-   * below — set for any other document type that also always has a
-   * real-world expiry (e.g. an ownership contract or miscellaneous file).
-   * Must agree with performDocumentUpload's matching server-side check in
-   * app/document-actions.ts, since the client-side `required` here is a UX
-   * nicety, not the actual enforcement. */
-  expiryRequired: expiryRequiredOverride,
+  /** Renders just the list and upload form — no outer bordered section or
+   * heading — for embedding inside a card that already titles it. */
+  bare = false,
 }: {
   documents: DocumentItem[];
   targetType: EntityDocumentTargetType;
@@ -127,17 +123,13 @@ export function EntityDocumentManager({
   compact?: boolean;
   readOnly?: boolean;
   inline?: boolean;
-  expiryRequired?: boolean;
+  bare?: boolean;
 }) {
   const fieldPrefix = `${targetType}-${targetId}`;
   // A single fixed category (the common case when embedded in a specific
   // document's own card) doesn't need a picker — it would just be a
   // one-option dropdown restating what the card title already says.
   const singleCategory = categories.length === 1 ? categories[0] : null;
-  // A tenancy document (agreement, municipality registration, ...) always
-  // has a real-world term — see performDocumentUpload's matching
-  // server-side check in app/document-actions.ts.
-  const expiryRequired = expiryRequiredOverride ?? targetType === "tenancy";
 
   const [uploadState, uploadFormAction] = useActionState<
     UploadDocumentsState,
@@ -228,15 +220,14 @@ export function EntityDocumentManager({
                 htmlFor={`${fieldPrefix}-expires-compact`}
                 className="text-xs"
               >
-                Expiry date{expiryRequired ? "" : " (optional)"}
+                Expiry date (optional)
               </Label>
               <Input
                 id={`${fieldPrefix}-expires-compact`}
                 type="date"
                 name="expiresAt"
                 min={dateInputValue()}
-                required={expiryRequired}
-                className="h-9 w-40 text-xs"
+                  className="h-9 w-40 text-xs"
               />
             </div>
             <SubmitButton
@@ -259,29 +250,34 @@ export function EntityDocumentManager({
   const body = (
     <>
       {documents.length > 0 ? (
-        <div className="divide-y rounded-lg border">
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-white shadow-sm">
           {documents.map((document) => (
             <div
               key={document.id}
-              className="flex items-center gap-3 px-3 py-2.5"
+              className="flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-slate-50"
             >
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+                <FileText className="h-4 w-4" />
+              </span>
               <div className="min-w-0 flex-1">
                 <a
                   href={`/api/entity-document/${document.id}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1 truncate text-sm font-medium hover:text-primary hover:underline"
+                  className="flex items-center gap-1 truncate text-sm font-semibold text-foreground hover:text-primary hover:underline"
                 >
                   <span className="truncate">
                     {document.label || document.fileName}
                   </span>
                   <ExternalLink className="h-3 w-3 shrink-0" />
                 </a>
-                <p className="flex flex-wrap items-center gap-1 truncate text-[11px] text-muted-foreground">
-                  {ENTITY_DOCUMENT_CATEGORY_LABEL[document.category]} ·{" "}
-                  {formatFileSize(document.fileSize)} ·{" "}
-                  {document.createdAt.toLocaleDateString("en-OM")}
+                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span className="rounded-md bg-teal-50 px-1.5 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/15">
+                    {ENTITY_DOCUMENT_CATEGORY_LABEL[document.category]}
+                  </span>
+                  <span>{formatFileSize(document.fileSize)}</span>
+                  <span>·</span>
+                  <span>{document.createdAt.toLocaleDateString("en-OM")}</span>
                   <ExpiryChip expiresAt={document.expiresAt} />
                 </p>
               </div>
@@ -305,14 +301,14 @@ export function EntityDocumentManager({
           ))}
         </div>
       ) : (
-        <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+        <p className="rounded-xl border-2 border-dashed border-border bg-white px-3 py-5 text-center text-sm text-muted-foreground">
           No documents uploaded yet.
         </p>
       )}
 
       {!readOnly && (
       <form
-        className="space-y-3"
+        className="space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4 shadow-sm"
         // React sets encType itself when action is a function (inline
         // mode) and warns if it's also set explicitly here.
         encType={inline ? undefined : "multipart/form-data"}
@@ -324,6 +320,10 @@ export function EntityDocumentManager({
         {singleCategory && (
           <input type="hidden" name="category" value={singleCategory} />
         )}
+        <p className="flex items-center gap-2 text-sm font-semibold text-teal-900">
+          <Upload className="h-4 w-4" />
+          Add a document
+        </p>
         <div
           className={
             singleCategory
@@ -361,14 +361,13 @@ export function EntityDocumentManager({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor={`${fieldPrefix}-expires`} className="text-xs">
-              Expiry date{expiryRequired ? "" : " (optional)"}
+              Expiry date (optional)
             </Label>
             <Input
               id={`${fieldPrefix}-expires`}
               type="date"
               name="expiresAt"
               min={dateInputValue()}
-              required={expiryRequired}
             />
           </div>
         </div>
@@ -397,6 +396,8 @@ export function EntityDocumentManager({
       )}
     </>
   );
+
+  if (bare) return <div className="space-y-4">{body}</div>;
 
   return (
     <section className="space-y-4 rounded-xl border bg-background p-4">

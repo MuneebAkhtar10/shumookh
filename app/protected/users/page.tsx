@@ -1,7 +1,11 @@
 import {
+  Building2,
+  DoorOpen,
   FileText,
   IdCard,
   KeyRound,
+  Mail,
+  Phone,
   Search,
   Shield,
   Trash2,
@@ -19,6 +23,8 @@ import {
 } from "@/app/admin-actions";
 import { EmptyState } from "@/components/empty-state";
 import { EntityDocumentManager } from "@/components/entity-document-manager";
+import { AccountSection } from "@/components/account-section";
+import { OwnerPortfolio, type OwnerPortfolioProperty } from "@/components/owner-portfolio";
 import { FormMessage, Message } from "@/components/form-message";
 import { PageHeader } from "@/components/page-header";
 import { SubmitButton } from "@/components/submit-button";
@@ -35,10 +41,11 @@ import { ManageToggle } from "@/components/manage-toggle";
 import { WorkerHrBadge, WorkerHrModal } from "@/components/worker-hr-modal";
 import { HrOverview } from "@/components/hr-overview";
 import type { PickableUnit } from "@/components/unit-picker";
-import { formatUnitLabel } from "@/lib/property-types";
+import { formatUnitLabel, isIndependentType } from "@/lib/property-types";
 import { prisma } from "@/lib/prisma";
 import { requireRole, isStaffAdmin } from "@/lib/session";
-import { canManagePermissions } from "@/lib/permissions";
+import { adminAccess, canManagePermissions } from "@/lib/permissions";
+import { OwnerReportModal } from "@/components/owner-report-modal";
 import { UserType } from "@/lib/generated/prisma/client";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { PageProps } from "@/types/page";
@@ -49,6 +56,15 @@ const ROLE_PILL: Record<UserType, string> = {
   worker: "bg-[#0886be]/10 text-[#0886be] ring-[#0886be]/20",
   user: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
   owner: "bg-amber-50 text-amber-700 ring-amber-600/20",
+};
+
+/** Soft tinted avatar tile per role. */
+const ROLE_AVATAR: Record<UserType, string> = {
+  admin: "bg-violet-50 text-violet-700 ring-violet-200",
+  super_admin: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200",
+  worker: "bg-sky-50 text-sky-700 ring-sky-200",
+  user: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  owner: "bg-amber-50 text-amber-700 ring-amber-200",
 };
 
 const ROLE_LABEL: Record<UserType, string> = {
@@ -65,7 +81,7 @@ const ROLE_FILTERS = [
   { value: "worker_in_house", label: "In House Workers" },
   { value: "worker_third_party", label: "3rd Party Vendors" },
   { value: "admin", label: "Admins" },
-  { value: "super_admin", label: "Super admins" },
+  { value: "super_admin", label: "Super admins", superOnly: true },
   { value: "owner", label: "Owners" },
 ] as const;
 
@@ -85,6 +101,11 @@ export default async function PeoplePage({ searchParams }: PageProps) {
       : "user";
 
   const andConditions: Prisma.UserWhereInput[] = [];
+  // Super admin accounts belong to the company/developers only — nobody else
+  // sees them listed, counted or filterable anywhere.
+  if (!allowSuperAdmin) {
+    andConditions.push({ userType: { not: UserType.super_admin } });
+  }
 
   if (query) {
     andConditions.push({
@@ -113,7 +134,7 @@ export default async function PeoplePage({ searchParams }: PageProps) {
     ? { AND: andConditions }
     : {};
 
-  const [users, emptyUnits, inHouseWorkers, roleCounts] = await Promise.all([
+  const [users, emptyUnits, inHouseWorkers, roleCounts, propertyTypes, reportOwners] = await Promise.all([
     prisma.user.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -140,8 +161,71 @@ export default async function PeoplePage({ searchParams }: PageProps) {
     }),
     // Unfiltered totals for the summary tiles — these always describe the
     // whole org, independent of whatever search/role filter is applied below.
-    prisma.user.groupBy({ by: ["userType"], _count: true }),
+    prisma.user.groupBy({
+      by: ["userType"],
+      _count: true,
+      where: allowSuperAdmin ? {} : { userType: { not: UserType.super_admin } },
+    }),
+    prisma.propertyType.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.user.findMany({
+      where: { userType: UserType.owner },
+      orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+      select: { id: true, email: true, firstName: true, lastName: true },
+    }),
   ]);
+  const canOwnerReport = (await adminAccess(admin)).can("prop_owner_report");
+
+  // Owners' linked properties + every document attached to them — the same
+  // property/unit document rows the property page manages.
+  const ownerIds = users.filter((u) => u.userType === UserType.owner).map((u) => u.id);
+  const ownedUnits = ownerIds.length
+    ? await prisma.unit.findMany({
+        where: { ownerId: { in: ownerIds } },
+        orderBy: [{ property: { name: "asc" } }, { label: "asc" }],
+        include: {
+          documents: { orderBy: { createdAt: "desc" } },
+          property: {
+            include: {
+              propertyType: {
+                select: {
+                  unitPrefix: true,
+                  unitNounSingular: true,
+                  hasFloors: true,
+                  hasBedrooms: true,
+                  isOwnerAssociation: true,
+                  isBuildingManagement: true,
+                  showRentBills: true,
+                  showMaintenance: true,
+                  hasCommonAreas: true,
+                },
+              },
+              documents: { orderBy: { createdAt: "desc" } },
+            },
+          },
+        },
+      })
+    : [];
+  const portfolioByOwner = new Map<string, OwnerPortfolioProperty[]>();
+  for (const unit of ownedUnits) {
+    const list = portfolioByOwner.get(unit.ownerId!) ?? [];
+    let entry = list.find((p) => p.id === unit.propertyId);
+    if (!entry) {
+      entry = {
+        id: unit.propertyId,
+        name: unit.property.name,
+        propertyDocuments: unit.property.documents,
+        units: [],
+        unitLabelPrefix: unit.property.propertyType.unitPrefix,
+        unitNoun: unit.property.propertyType.unitNounSingular,
+        hasFloors: unit.property.propertyType.hasFloors,
+        hasBedrooms: unit.property.propertyType.hasBedrooms,
+        singleUnitOnly: isIndependentType(unit.property.propertyType),
+      };
+      list.push(entry);
+    }
+    entry.units.push({ id: unit.id, label: unit.label, documents: unit.documents });
+    portfolioByOwner.set(unit.ownerId!, list);
+  }
 
   const totalPeople = roleCounts.reduce((sum, r) => sum + r._count, 0);
   const countByType = (type: UserType) =>
@@ -165,7 +249,9 @@ export default async function PeoplePage({ searchParams }: PageProps) {
       <PageHeader
         title="People"
         description={`${totalPeople} account${totalPeople === 1 ? "" : "s"} across every role`}
-      />
+      >
+        {canOwnerReport && <OwnerReportModal owners={reportOwners} />}
+      </PageHeader>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatTile
@@ -227,7 +313,9 @@ export default async function PeoplePage({ searchParams }: PageProps) {
           {/* Filters */}
           <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap gap-1">
-              {ROLE_FILTERS.map((filter) => {
+              {ROLE_FILTERS.filter(
+                (filter) => !("superOnly" in filter) || allowSuperAdmin,
+              ).map((filter) => {
                 const active =
                   filter.value === "all"
                     ? !role || role === "all"
@@ -274,7 +362,7 @@ export default async function PeoplePage({ searchParams }: PageProps) {
               description="Nobody matches these filters. Try clearing the search."
             />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 lg:max-h-[calc(100vh-15rem)] lg:overflow-y-auto lg:pr-2">
               {users.map((user) => {
                 const isSelf = user.id === admin.id;
                 const name = [user.firstName, user.lastName]
@@ -282,71 +370,100 @@ export default async function PeoplePage({ searchParams }: PageProps) {
                   .join(" ");
 
                 return (
-                  <Card key={user.id} className="border-border/60 shadow-sm">
-                    <CardContent className="flex flex-col gap-4 p-5">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex items-start gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
-                            {user.email.charAt(0).toUpperCase()}
+                  <Card
+                    key={user.id}
+                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
+                  >
+                    <CardContent className="flex flex-col gap-3 p-4">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3.5">
+                          <span
+                            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-base font-semibold ring-1 ring-inset ${ROLE_AVATAR[user.userType]}`}
+                          >
+                            {(name || user.email).charAt(0).toUpperCase()}
                           </span>
-                          <div className="space-y-0.5">
-                            <p className="flex flex-wrap items-center gap-2 font-medium">
-                              {user.email}
-                              {isSelf && (
-                                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                                  You
+                          <div className="min-w-0 space-y-1.5">
+                            <div>
+                              <p className="flex flex-wrap items-center gap-2 text-base font-semibold leading-tight text-slate-900">
+                                {name || user.email}
+                                {isSelf && (
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                                    You
+                                  </span>
+                                )}
+                              </p>
+                              {name && (
+                                <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-slate-500">
+                                  <Mail className="h-3.5 w-3.5 shrink-0" />
+                                  {user.email}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {user.phone && (
+                                <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
+                                  <Phone className="h-3.5 w-3.5 text-slate-400" />
+                                  {user.phone}
                                 </span>
                               )}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {name || "No name set"}
-                              {user.phone ? ` · ${user.phone}` : ""}
-                            </p>
-                            {(user.civilId ||
-                              user.nationality ||
-                              user.employer) && (
-                              <p className="text-xs text-muted-foreground">
-                                {user.civilId
-                                  ? `Civil ID: ${user.civilId}`
-                                  : ""}
-                                {user.nationality
-                                  ? ` · ${user.nationality}`
-                                  : ""}
-                                {user.employer ? ` · ${user.employer}` : ""}
-                              </p>
-                            )}
-                            {(user.emergencyContactName ||
-                              user.emergencyContactPhone) && (
-                              <p className="text-xs text-muted-foreground">
-                                Emergency:{" "}
-                                {user.emergencyContactName || "Contact"}
-                                {user.emergencyContactPhone
-                                  ? ` · ${user.emergencyContactPhone}`
-                                  : ""}
-                              </p>
-                            )}
-                            {user.unit ? (
-                              <p className="text-sm text-muted-foreground">
-                                Lives in{" "}
-                                <span className="font-medium text-foreground">
+                              {user.userType === UserType.owner && (() => {
+                                const owned = portfolioByOwner.get(user.id) ?? [];
+                                const unitCount = owned.reduce((n, p) => n + p.units.length, 0);
+                                return (
+                                  <>
+                                    <span className="inline-flex items-center gap-1.5 rounded-md bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 ring-1 ring-inset ring-teal-200">
+                                      <Building2 className="h-3.5 w-3.5" />
+                                      {owned.length} {owned.length === 1 ? "property" : "properties"}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
+                                      <DoorOpen className="h-3.5 w-3.5 text-slate-400" />
+                                      {unitCount} {unitCount === 1 ? "unit" : "units"}
+                                    </span>
+                                  </>
+                                );
+                              })()}
+                              {user.unit ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 ring-1 ring-inset ring-emerald-200">
+                                  <DoorOpen className="h-3.5 w-3.5" />
                                   {formatUnitLabel(
                                     user.unit.property.propertyType,
                                     user.unit.label,
-                                  )}
-                                </span>{" "}
-                                · {user.unit.property.name}
+                                  )}{" "}
+                                  · {user.unit.property.name}
+                                </span>
+                              ) : user.userType === UserType.user ? (
+                                <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
+                                  No unit assigned
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {(user.civilId || user.nationality || user.employer) && (
+                              <p className="text-xs text-slate-500">
+                                {[
+                                  user.civilId ? `Civil ID ${user.civilId}` : null,
+                                  user.nationality,
+                                  user.employer,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </p>
-                            ) : user.userType === UserType.user ? (
-                              <p className="text-sm text-amber-700">
-                                No unit assigned
+                            )}
+                            {(user.emergencyContactName || user.emergencyContactPhone) && (
+                              <p className="text-xs text-slate-500">
+                                Emergency contact:{" "}
+                                {[user.emergencyContactName || "Contact", user.emergencyContactPhone]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </p>
-                            ) : null}
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-1 sm:shrink-0 sm:flex-col sm:items-end">
+                        <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:flex-col sm:items-end">
                           <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${
                               ROLE_PILL[user.userType]
                             }`}
                           >
@@ -384,13 +501,17 @@ export default async function PeoplePage({ searchParams }: PageProps) {
                           </div>
                         )}
 
-                      <ManageToggle label="Manage account">
-                        <div className="space-y-2">
-                          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            <IdCard className="h-3.5 w-3.5" />
-                            Oman identity & contact record
-                          </p>
-                        <form className="space-y-3 rounded-lg border border-border/60 bg-background p-3">
+                      <ManageToggle
+                        label="Manage account"
+                        hint="Profile, documents and security"
+                      >
+                        <AccountSection
+                          icon={<IdCard />}
+                          tone="violet"
+                          title="Oman identity & contact record"
+                          subtitle="Contact details, Civil ID and mailing address"
+                        >
+                        <form className="space-y-3">
                           <input type="hidden" name="userId" value={user.id} />
                           <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1">
@@ -539,35 +660,40 @@ export default async function PeoplePage({ searchParams }: PageProps) {
                             Save profile
                           </SubmitButton>
                         </form>
-                        </div>
+                        </AccountSection>
 
-                        <div className="space-y-2">
-                          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            <FileText className="h-3.5 w-3.5" />
-                            Identity documents
-                            <span className="font-normal normal-case text-muted-foreground/70">
-                              ({user.documents.length})
-                            </span>
-                          </p>
-                          <div className="rounded-lg border border-border/60 bg-background p-3">
-                            <EntityDocumentManager
-                              documents={user.documents}
-                              targetType="user"
-                              targetId={user.id}
-                              back="/protected/users"
-                              title="Personal documents"
-                              description="Civil ID, passport, resident card, visa and employment or sponsor documents."
-                            />
-                          </div>
-                        </div>
+                        {user.userType === UserType.owner && (
+                          <OwnerPortfolio
+                            ownerId={user.id}
+                            ownerName={name || user.email}
+                            propertyTypes={propertyTypes}
+                            properties={portfolioByOwner.get(user.id) ?? []}
+                          />
+                        )}
+
+                        <AccountSection
+                          icon={<FileText />}
+                          tone="sky"
+                          title="Identity documents"
+                          subtitle={`${user.documents.length} ${user.documents.length === 1 ? "document" : "documents"} · Civil ID, passport, resident card, visa, employment letter`}
+                        >
+                          <EntityDocumentManager
+                            bare
+                            documents={user.documents}
+                            targetType="user"
+                            targetId={user.id}
+                            back="/protected/users"
+                          />
+                        </AccountSection>
 
                         {!isStaffAdmin(user.userType) && (
-                          <div className="space-y-2">
-                            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              <KeyRound className="h-3.5 w-3.5" />
-                              Reset password
-                            </p>
-                            <form className="space-y-3 rounded-lg border border-border/60 bg-background p-3">
+                          <AccountSection
+                            icon={<KeyRound />}
+                            tone="amber"
+                            title="Reset password"
+                            subtitle="Set a temporary password and share it securely"
+                          >
+                            <form className="space-y-3">
                               <input
                                 type="hidden"
                                 name="userId"
@@ -605,11 +731,17 @@ export default async function PeoplePage({ searchParams }: PageProps) {
                                 Set temporary password
                               </SubmitButton>
                             </form>
-                          </div>
+                          </AccountSection>
                         )}
 
                         {!isSelf && (
-                          <div className="flex flex-wrap items-end gap-3 border-t pt-4">
+                          <AccountSection
+                            icon={<UserCog />}
+                            tone="slate"
+                            title="Account settings"
+                            subtitle="Change this person's role or remove the account"
+                          >
+                          <div className="flex flex-wrap items-end gap-3">
                             <form className="flex items-end gap-2">
                               <input
                                 type="hidden"
@@ -654,6 +786,7 @@ export default async function PeoplePage({ searchParams }: PageProps) {
                               </SubmitButton>
                             </form>
                           </div>
+                          </AccountSection>
                         )}
                       </ManageToggle>
                     </CardContent>
@@ -667,7 +800,7 @@ export default async function PeoplePage({ searchParams }: PageProps) {
         {/* ── Create a user ────────────────────────────────────────────────── */}
         <Card
           id="add-person"
-          className="h-fit overflow-hidden border-border/60 shadow-sm lg:sticky lg:top-24"
+          className="h-fit overflow-hidden border-border/60 shadow-sm lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
         >
           <div className="flex items-center gap-2 bg-gradient-to-r from-teal-600 to-cyan-600 px-5 py-3.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/15 text-white">
