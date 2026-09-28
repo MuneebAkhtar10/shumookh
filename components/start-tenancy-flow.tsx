@@ -676,9 +676,13 @@ function ResolveDialog({
   onDone: () => void;
 }) {
   const { match, extraction } = result;
+  // A missing property is created together with its unit in one form, so the
+  // unit only gets its own step when the property already exists (found, or
+  // picked from the suggestions).
   const needed = STEP_ORDER.filter((s) => {
+    if (s === step) return true;
     if (s === "property") return match.property.status !== "found";
-    if (s === "unit") return match.unit.status === "missing" || match.property.status !== "found";
+    if (s === "unit") return match.property.status === "found" && match.unit.status === "missing";
     return match.tenant.status === "missing";
   });
   const index = step && step !== "tenantDone" ? needed.indexOf(step) : needed.length - 1;
@@ -696,7 +700,7 @@ function ResolveDialog({
         step === "property"
           ? match.property.candidates.length > 0
             ? "Confirm the property"
-            : "Property not found"
+            : "Property and unit not found"
           : step === "unit"
             ? `${extraction.property.unitLabel ?? "Unit"} not found`
             : step === "tenant"
@@ -726,7 +730,14 @@ function ResolveDialog({
       widthClassName="max-w-xl"
     >
       {step === "property" && (
-        <PropertyStep match={match} extraction={extraction} propertyTypes={propertyTypes} onResolved={onPropertyResolved} onSkip={onClose} />
+        <PropertyStep
+          match={match}
+          extraction={extraction}
+          propertyTypes={propertyTypes}
+          onResolved={onPropertyResolved}
+          onUnitCreated={onUnitCreated}
+          onSkip={onClose}
+        />
       )}
       {step === "unit" && property && (
         <UnitStep property={property} match={match} onCreated={onUnitCreated} onSkip={onClose} />
@@ -773,6 +784,10 @@ function StepFooter({
   );
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <p className="border-t pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{children}</p>;
+}
+
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <div className="space-y-1">
@@ -802,17 +817,21 @@ function guessPropertyType(types: PropertyTypeOption[], ex: TenancyExtraction): 
   return guess ?? types[0]?.id ?? "";
 }
 
+/** Property and its unit in one form: a property that isn't in the system has
+ * no units yet, so the agreement's unit is created together with it. */
 function PropertyStep({
   match,
   extraction,
   propertyTypes,
   onResolved,
+  onUnitCreated,
   onSkip,
 }: {
   match: TenancyMatch;
   extraction: TenancyExtraction;
   propertyTypes: PropertyTypeOption[];
   onResolved: (p: { id: string; name: string }) => Promise<void> | void;
+  onUnitCreated: (u: CreatedUnit) => void;
   onSkip: () => void;
 }) {
   const p = extraction.property;
@@ -820,6 +839,12 @@ function PropertyStep({
   const [typeId, setTypeId] = useState(guessPropertyType(propertyTypes, extraction));
   const [address, setAddress] = useState(match.property.suggestedAddress);
   const [governorate, setGovernorate] = useState(p.governorate && OMAN_GOVERNORATES.includes(p.governorate as never) ? p.governorate : "Muscat");
+  const [unitLabel, setUnitLabel] = useState(match.unit.suggestedLabel);
+  const [unitArea, setUnitArea] = useState("");
+  const [floor, setFloor] = useState("");
+  // Kept if the unit fails after the property was saved, so a retry doesn't
+  // try to create the property a second time.
+  const [createdProperty, setCreatedProperty] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -827,19 +852,41 @@ function PropertyStep({
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const res = await createPropertyFromContractAction({
-        name,
-        propertyTypeId: typeId,
-        address,
-        governorate,
-        area: p.area ?? "",
-        buildingNumber: p.buildingNumber ?? "",
-        wayNumber: p.way ?? "",
-        plotNumber: p.plot ?? "",
+      let created = createdProperty;
+      if (!created) {
+        const res = await createPropertyFromContractAction({
+          name,
+          propertyTypeId: typeId,
+          address,
+          governorate,
+          area: p.area ?? "",
+          buildingNumber: p.buildingNumber ?? "",
+          wayNumber: p.way ?? "",
+          plotNumber: p.plot ?? "",
+        });
+        if (!res.ok) return setError(res.error);
+        created = { id: res.property.id, name: res.property.name };
+        setCreatedProperty(created);
+      }
+
+      const unitRes = await createUnitFromContractAction({
+        propertyId: created.id,
+        label: unitLabel,
+        areaSqm: unitArea,
+        floor,
       });
-      if (!res.ok) return setError(res.error);
-      await onResolved({ id: res.property.id, name: res.property.name });
+      if (!unitRes.ok) {
+        return setError(`${created.name} was created, but its unit wasn't: ${unitRes.error}`);
+      }
+      await onResolved(created);
+      onUnitCreated(unitRes.unit);
     });
+  };
+
+  // Leaving after the property was saved still selects it on the agreement form.
+  const skip = () => {
+    if (createdProperty) void onResolved(createdProperty);
+    onSkip();
   };
 
   return (
@@ -879,16 +926,17 @@ function PropertyStep({
         </>
       ) : (
         <p className="text-sm">
-          The property <strong>“{name.trim() || match.property.suggestedName}”</strong> isn&apos;t in your list. Do you want to create it first?
+          The property <strong>“{name.trim() || match.property.suggestedName}”</strong> isn&apos;t in your list. Create it together with its unit?
         </p>
       )}
 
+      <SectionLabel>Property</SectionLabel>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Property name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} required />
+          <Input value={name} onChange={(e) => setName(e.target.value)} required disabled={Boolean(createdProperty)} />
         </Field>
         <Field label="Property type">
-          <Select value={typeId} onChange={(e) => setTypeId(e.target.value)} required>
+          <Select value={typeId} onChange={(e) => setTypeId(e.target.value)} required disabled={Boolean(createdProperty)}>
             {propertyTypes.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.label}
@@ -898,10 +946,10 @@ function PropertyStep({
         </Field>
       </div>
       <Field label="Address" hint="Built from the block, building, way and plot on the agreement.">
-        <Input value={address} onChange={(e) => setAddress(e.target.value)} required />
+        <Input value={address} onChange={(e) => setAddress(e.target.value)} required disabled={Boolean(createdProperty)} />
       </Field>
       <Field label="Governorate">
-        <Select value={governorate} onChange={(e) => setGovernorate(e.target.value)}>
+        <Select value={governorate} onChange={(e) => setGovernorate(e.target.value)} disabled={Boolean(createdProperty)}>
           {OMAN_GOVERNORATES.map((g) => (
             <option key={g} value={g}>
               {g}
@@ -909,7 +957,31 @@ function PropertyStep({
           ))}
         </Select>
       </Field>
-      <StepFooter pending={pending} yesLabel={match.property.candidates.length > 0 ? "Create a new property" : "Yes, create property"} error={error} onSkip={onSkip} />
+
+      <SectionLabel>Unit</SectionLabel>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Field label="Unit number">
+          <Input value={unitLabel} onChange={(e) => setUnitLabel(e.target.value)} required />
+        </Field>
+        <Field label="Area (m²)" hint="Required — the agreement doesn't state it.">
+          <Input type="number" min="0.01" step="0.01" value={unitArea} onChange={(e) => setUnitArea(e.target.value)} placeholder="e.g. 85.5" required />
+        </Field>
+        <Field label="Floor (optional)">
+          <Input type="number" value={floor} onChange={(e) => setFloor(e.target.value)} />
+        </Field>
+      </div>
+      <StepFooter
+        pending={pending}
+        yesLabel={
+          createdProperty
+            ? "Create unit"
+            : match.property.candidates.length > 0
+              ? "Create new property and unit"
+              : "Yes, create property and unit"
+        }
+        error={error}
+        onSkip={skip}
+      />
     </form>
   );
 }

@@ -23,7 +23,7 @@ import { FormMessage, Message } from "@/components/form-message";
 import { PageHeader } from "@/components/page-header";
 import { AlertPreviewModal } from "@/components/alert-preview-modal";
 import { RentStatementModal } from "@/components/rent-statement-modal";
-import { StartTenancyForm } from "@/components/start-tenancy-form";
+import { StartTenancyFlow } from "@/components/start-tenancy-flow";
 import { SubmitButton } from "@/components/submit-button";
 import { ButtonLink } from "@/components/ui/button-link";
 import { buttonVariants } from "@/components/ui/button-variants";
@@ -184,6 +184,15 @@ export default async function TenanciesPage({ searchParams }: PageProps) {
     propertyTypeUnitPrefix: unit.property.propertyType.unitPrefix,
     propertyTypeShowRentBills: unit.property.propertyType.showRentBills,
   }));
+  // Owner-association types never carry tenancies, so a property created from
+  // an agreement can't be one of them.
+  const propertyTypes = isAdmin
+    ? await prisma.propertyType.findMany({
+        where: { isOwnerAssociation: false },
+        orderBy: { label: "asc" },
+        select: { id: true, label: true, unitNounSingular: true },
+      })
+    : [];
   const scheduledMonthlyRent = Number(activeTotals._sum.monthlyRent ?? 0);
   const welcomePreviews = isAdmin
     ? new Map(
@@ -831,41 +840,11 @@ export default async function TenanciesPage({ searchParams }: PageProps) {
             <span className="text-base font-semibold">Create Tenant Agreement</span>
           </div>
           <CardContent className="pt-5">
-            {availableTenants.length === 0 || emptyUnits.length === 0 ? (
-              <div className="space-y-4 text-sm text-muted-foreground">
-                <p>
-                  You need both an unassigned tenant and an empty unit to
-                  start a tenancy.
-                </p>
-                <p className="text-xs">
-                  Create tenant accounts under People and units under
-                  Properties.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  <ButtonLink
-                    href="/protected/users"
-                    variant="outline"
-                    size="sm"
-                  >
-                    <Users className="h-4 w-4" />
-                    People
-                  </ButtonLink>
-                  <ButtonLink
-                    href="/protected/properties"
-                    variant="outline"
-                    size="sm"
-                  >
-                    <Home className="h-4 w-4" />
-                    Properties
-                  </ButtonLink>
-                </div>
-              </div>
-            ) : (
-              <StartTenancyForm
-                availableTenants={availableTenants}
-                pickableUnits={pickableUnits}
-              />
-            )}
+            <StartTenancyFlow
+              availableTenants={availableTenants}
+              pickableUnits={pickableUnits}
+              propertyTypes={propertyTypes}
+            />
           </CardContent>
         </Card>
         )}
