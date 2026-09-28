@@ -75,7 +75,11 @@ function financesReturn(formData: FormData, fallback: string): string {
 
 /** Stay on the charge after a payment/review, but keep the ledger filters
  * on `back` so "Rent & bills" still opens the same filtered list. */
-function chargeReturn(formData: FormData, chargeId: string): string {
+function chargeReturn(
+  formData: FormData,
+  chargeId: string | undefined,
+): string {
+  if (!chargeId) return "/protected/finances";
   const detail = `/protected/finances/${chargeId}`;
   const list = formData.get("back")?.toString() ?? "";
   if (
@@ -328,6 +332,9 @@ export const startTenancyAction = async (formData: FormData) => {
     try {
       await notifyTenantAssigned({
         tenantId,
+        tenantName:
+          [tenant.firstName, tenant.lastName].filter(Boolean).join(" ") ||
+          tenant.email,
         propertyName: unit.property.name,
         unitLabel,
         moveInDate: format(startDate, "d MMMM yyyy"),
@@ -562,17 +569,13 @@ export const resendTenancyWelcomeEmailAction = async (formData: FormData) => {
     return encodedRedirect("error", "/protected/tenancies", "Tenancy not found.");
   }
 
-  if (!tenancy.unit.rentBillsEnabled) {
-    return encodedRedirect(
-      "error",
-      "/protected/tenancies",
-      "Rent & bills are turned off for this unit — there's no welcome email to resend.",
-    );
-  }
-
   try {
     await notifyTenantAssigned({
       tenantId: tenancy.tenantId,
+      tenantName:
+        [tenancy.tenant.firstName, tenancy.tenant.lastName].filter(Boolean).join(" ") ||
+        tenancy.tenant.email,
+      placeholderTerms: Number(tenancy.monthlyRent) === 0,
       propertyName: tenancy.unit.property.name,
       unitLabel: formatUnitLabel(
         tenancy.unit.property.propertyType,
@@ -589,6 +592,7 @@ export const resendTenancyWelcomeEmailAction = async (formData: FormData) => {
         ? format(tenancy.leaseEndDate, "d MMMM yyyy")
         : undefined,
       ownerId: tenancy.unit.ownerId,
+      customMessage: formData.get("customMessage")?.toString(),
     });
   } catch (error) {
     console.error("Resend welcome email failed:", error);
@@ -1229,6 +1233,7 @@ export const submitPaymentAction = async (formData: FormData) => {
         chargeId,
         title: charge.title,
         approved: true,
+        ownerId: charge.unit.ownerId,
       });
     }
 
@@ -1364,6 +1369,8 @@ export const reviewPaymentAction = async (
       chargeId: payment.chargeId,
       title: payment.charge.title,
       approved,
+      reason: approved ? undefined : reviewNotes,
+      ownerId: payment.charge.unit.ownerId,
     });
 
     if (chargeFullyPaid) {
@@ -1402,6 +1409,109 @@ export const reviewPaymentAction = async (
   );
 };
 
+/**
+ * Corrects a payment after it has been approved — amount, date, method,
+ * reference and the collection/cheque details. Admin only. The charge's
+ * paid/open status is recomputed from the corrected approved total, and the
+ * edit is appended to the payment's review note as an audit trail.
+ */
+export const updatePaymentAction = async (formData: FormData) => {
+  const admin = await requireRole(UserType.admin);
+
+  const paymentId = formData.get("paymentId")?.toString();
+  const paidAt = parseDate(formData.get("paidAt")?.toString());
+  const method = formData.get("method")?.toString();
+  const reference = formData.get("reference")?.toString().trim() || null;
+  const notes = formData.get("notes")?.toString().trim() || null;
+  const collectedByRaw = formData.get("collectedBy")?.toString();
+  const collectedBy = (Object.values(PaymentCollector) as string[]).includes(
+    collectedByRaw ?? "",
+  )
+    ? (collectedByRaw as PaymentCollector)
+    : PaymentCollector.management;
+  const receivedByName = formData.get("receivedByName")?.toString().trim() || null;
+  const transactionNumber =
+    formData.get("transactionNumber")?.toString().trim() || null;
+  const chequeNumber = formData.get("chequeNumber")?.toString().trim() || null;
+  const chequeDate = parseDate(formData.get("chequeDate")?.toString());
+  const bank = formData.get("bank")?.toString().trim() || null;
+
+  const payment = paymentId
+    ? await prisma.payment.findUnique({
+        where: { id: paymentId },
+        include: {
+          charge: {
+            include: { payments: { select: { id: true, amount: true, status: true } } },
+          },
+        },
+      })
+    : null;
+  const back = payment ? chargeReturn(formData, payment.chargeId) : "/protected/finances";
+
+  if (!payment || !paidAt || !method || !PAYMENT_METHODS.includes(method)) {
+    return encodedRedirect("error", back, "Complete the payment details correctly.");
+  }
+  if (payment.status !== PaymentStatus.approved) {
+    return encodedRedirect(
+      "error",
+      back,
+      "Only an approved payment can be edited here — review pending proofs first.",
+    );
+  }
+
+  const stamp = `Edited ${new Date().toLocaleDateString("en-GB")} by ${admin.email}`;
+  const auditNote = [payment.reviewNotes, stamp].filter(Boolean).join(" · ");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        // The amount is deliberately not editable after approval.
+        paidAt,
+        method: method as PaymentMethod,
+        reference,
+        notes,
+        collectedBy,
+        receivedByName,
+        transactionNumber,
+        chequeNumber,
+        chequeDate,
+        bank,
+        reviewNotes: auditNote,
+      },
+    });
+
+    const total = await tx.payment.aggregate({
+      where: { chargeId: payment.chargeId, status: PaymentStatus.approved },
+      _sum: { amount: true },
+    });
+    if (payment.charge.status !== ChargeStatus.waived) {
+      await tx.charge.update({
+        where: { id: payment.chargeId },
+        data: {
+          status:
+            Number(total._sum.amount ?? 0) >= Number(payment.charge.amount)
+              ? ChargeStatus.paid
+              : ChargeStatus.open,
+        },
+      });
+    }
+  });
+
+  try {
+    await pushPaymentToDynamics(payment.id);
+  } catch (error) {
+    console.error("Dynamics sync failed for edited payment:", payment.id, error);
+  }
+
+  await publishFinance([payment.charge.tenantId]);
+  revalidatePath(chargeReturn(formData, payment.chargeId));
+  revalidatePath("/protected/finances");
+  revalidatePath("/protected/finances/rent-position");
+
+  return encodedRedirect("success", back, "Payment updated.");
+};
+
 export const waiveChargeAction = async (formData: FormData) => {
   await requireRole(UserType.admin);
   const chargeId = formData.get("chargeId")?.toString();
@@ -1414,7 +1524,16 @@ export const waiveChargeAction = async (formData: FormData) => {
     where: { id: chargeId },
     include: {
       payments: { select: { status: true } },
-      unit: { select: { ownerId: true } },
+      tenant: { select: { email: true, firstName: true, lastName: true } },
+      unit: {
+        select: {
+          ownerId: true,
+          label: true,
+          property: {
+            select: { name: true, propertyType: { select: { unitPrefix: true, hasFloors: true } } },
+          },
+        },
+      },
     },
   });
   if (!charge || charge.status !== ChargeStatus.open) {
@@ -1450,6 +1569,13 @@ export const waiveChargeAction = async (formData: FormData) => {
       ownerId: charge.unit.ownerId,
       chargeId,
       title: charge.title,
+      propertyName: charge.unit.property.name,
+      unitLabel: formatUnitLabel(charge.unit.property.propertyType, charge.unit.label),
+      amount: formatMoney(charge.amount),
+      tenantName:
+        [charge.tenant.firstName, charge.tenant.lastName].filter(Boolean).join(" ") ||
+        charge.tenant.email,
+      customMessage: formData.get("customMessage")?.toString(),
     });
   } catch (error) {
     console.error("Charge waived notification failed:", error);
@@ -1460,6 +1586,66 @@ export const waiveChargeAction = async (formData: FormData) => {
   revalidatePath("/protected/finances");
 
   return encodedRedirect("success", chargeReturn(formData, chargeId), "Charge waived.");
+};
+
+/** Re-sends the "charge waived" notice for a charge that has already been
+ * waived — the right message when a tenant asks about a waived charge,
+ * instead of an invoice that says something is due. */
+export const resendWaiverNoticeAction = async (formData: FormData) => {
+  await requireRole(UserType.admin);
+  const chargeId = formData.get("chargeId")?.toString();
+  if (!chargeId) {
+    return encodedRedirect("error", "/protected/finances", "Charge not found.");
+  }
+
+  const charge = await prisma.charge.findUnique({
+    where: { id: chargeId },
+    include: {
+      tenant: { select: { email: true, firstName: true, lastName: true } },
+      unit: {
+        select: {
+          ownerId: true,
+          label: true,
+          property: {
+            select: { name: true, propertyType: { select: { unitPrefix: true, hasFloors: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!charge || charge.status !== ChargeStatus.waived) {
+    return encodedRedirect(
+      "error",
+      chargeReturn(formData, chargeId),
+      "Only a waived charge has a waiver notice to resend.",
+    );
+  }
+
+  try {
+    await notifyChargeWaived({
+      tenantId: charge.tenantId,
+      // Only the tenant is re-notified; the owner already had theirs.
+      ownerId: null,
+      chargeId,
+      title: charge.title,
+      propertyName: charge.unit.property.name,
+      unitLabel: formatUnitLabel(charge.unit.property.propertyType, charge.unit.label),
+      amount: formatMoney(charge.amount),
+      tenantName:
+        [charge.tenant.firstName, charge.tenant.lastName].filter(Boolean).join(" ") ||
+        charge.tenant.email,
+      customMessage: formData.get("customMessage")?.toString(),
+    });
+  } catch (error) {
+    console.error("Resend waiver notice failed:", error);
+    return encodedRedirect(
+      "error",
+      chargeReturn(formData, chargeId),
+      "Could not resend the notice. Try again.",
+    );
+  }
+
+  return encodedRedirect("success", chargeReturn(formData, chargeId), "Waiver notice resent to the tenant.");
 };
 
 /** Re-sends the invoice email for a single charge, rebuilt fresh from the
@@ -1496,6 +1682,18 @@ export const resendChargeInvoiceEmailAction = async (formData: FormData) => {
     );
   }
 
+  // A closed charge is no longer due — an invoice reminder would tell the
+  // tenant to pay something they don't owe.
+  if (charge.status !== ChargeStatus.open) {
+    return encodedRedirect(
+      "error",
+      chargeReturn(formData, chargeId),
+      charge.status === ChargeStatus.waived
+        ? "This charge was waived — resend the waiver notice instead."
+        : "This charge is already paid — there is no invoice to resend.",
+    );
+  }
+
   try {
     await notifyTenantInvoice({
       tenantId: charge.tenantId,
@@ -1513,6 +1711,7 @@ export const resendChargeInvoiceEmailAction = async (formData: FormData) => {
       href: financeBack(charge.id),
       lineItems: [{ label: charge.title, amount: formatMoney(charge.amount) }],
       total: formatMoney(charge.amount),
+      customMessage: formData.get("customMessage")?.toString(),
     });
   } catch (error) {
     console.error("Resend invoice email failed:", error);

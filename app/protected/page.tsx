@@ -17,6 +17,7 @@ import { DonutChart } from "@/components/dashboard-charts";
 import { StatTile, TileMoney } from "@/components/dashboard-ui";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { SpaceSummary } from "@/components/space-summary";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
@@ -26,9 +27,10 @@ import {
   moneyValue,
 } from "@/lib/finance";
 import { formatOmanAddress } from "@/lib/oman";
+import { computeSpaceStats } from "@/lib/unit-area";
 import { formatUnitLabel } from "@/lib/property-types";
 import { requireUser, type SessionUser, isStaffAdmin } from "@/lib/session";
-import { firstAllowedAdminHref, hasAdminModule } from "@/lib/permissions";
+import { adminAccess, firstAllowedAdminHref, hasAdminModule } from "@/lib/permissions";
 import { StatusBadge } from "@/lib/status";
 import {
   ChargeStatus,
@@ -51,7 +53,12 @@ export default async function DashboardPage() {
 
   return (
     <div className="w-full space-y-8 px-4 pt-4 pb-8 sm:px-6 lg:px-8">
-      {showAdminDashboard && <AdminDashboard />}
+      {showAdminDashboard && (
+        <AdminDashboard
+          showRequests={await hasAdminModule(user, "maintenance")}
+          can={(await adminAccess(user)).can}
+        />
+      )}
       {isStaffAdmin(user.userType) && !showAdminDashboard && (
         <PageHeader
           title="No modules assigned"
@@ -70,7 +77,7 @@ export default async function DashboardPage() {
 /** Same shape as the admin dashboard's stats, scoped to properties this
  * landlord owns. Owners never see other owners' or unassigned properties. */
 async function OwnerDashboard({ user }: { user: SessionUser }) {
-  const [properties, unitCount, occupiedCount, openRequests, outstandingCharges, scUnits] =
+  const [properties, unitCount, occupiedCount, openRequests, outstandingCharges, scUnits, ownedUnits] =
     await Promise.all([
       prisma.property.count({ where: { units: { some: { ownerId: user.id } } } }),
       prisma.unit.count({ where: { ownerId: user.id } }),
@@ -99,7 +106,12 @@ async function OwnerDashboard({ user }: { user: SessionUser }) {
         where: { ownerId: user.id, serviceChargeBalance: { gt: 0 } },
         select: { serviceChargeBalance: true },
       }),
+      prisma.unit.findMany({
+        where: { ownerId: user.id },
+        select: { areaSqm: true, tenantId: true },
+      }),
     ]);
+  const space = computeSpaceStats(ownedUnits);
 
   const outstanding = outstandingCharges.reduce(
     (total, charge) => total + chargeBalance(charge),
@@ -193,6 +205,17 @@ async function OwnerDashboard({ user }: { user: SessionUser }) {
                 },
               ]}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {space.unitsWithArea > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Space (m²)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SpaceSummary stats={space} />
           </CardContent>
         </Card>
       )}

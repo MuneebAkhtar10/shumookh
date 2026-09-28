@@ -18,7 +18,8 @@ import {
   pushUnitToDynamics,
   pushTenantToDynamics,
 } from "@/lib/dynamics/entities";
-import { formatMoney, parseServiceCharge } from "@/lib/finance";
+import { formatMoney, parseDate, parseServiceCharge } from "@/lib/finance";
+import { storeEntityDocumentGroups, uploadedFiles } from "@/lib/entity-document-service";
 import {
   defaultUnitPermissions,
   formatUnitLabel,
@@ -30,7 +31,9 @@ import {
   type PropertyManagementFlags,
 } from "@/lib/property-types";
 import { publish } from "@/lib/realtime";
+import { parseAreaSqm } from "@/lib/unit-area";
 import { requireAnyRole, requireRole, isStaffAdmin } from "@/lib/session";
+import { DEFAULT_ADMIN_MODULE_KEYS } from "@/lib/admin-modules";
 import { canManagePermissions } from "@/lib/permissions";
 import { STAFF_ADMIN_TYPES } from "@/lib/user-roles";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -39,6 +42,7 @@ import { isValidPhone } from "@/lib/phone";
 import { deleteAttachment, uploadEntityDocument } from "@/lib/storage";
 import { encodedRedirect } from "@/utils/utils";
 import {
+  EntityDocumentCategory,
   FamilyRelationship,
   RejectionKind,
   UserType,
@@ -71,6 +75,12 @@ function publishDirectoryChange(userIds: (string | null | undefined)[] = []) {
 export const createPropertyAction = async (formData: FormData) => {
   const actor = await requireAnyRole(UserType.admin, UserType.owner);
   const isOwner = actor.userType === UserType.owner;
+  // Created from the People page's owner card (in a modal) — stay there
+  // instead of jumping to the new property's page.
+  const requestedBack = formData.get("back")?.toString();
+  const stayOnPeople =
+    !isOwner && requestedBack === "/protected/users" ? requestedBack : null;
+  const errorPath = stayOnPeople ?? "/protected/properties";
 
   const name = formData.get("name")?.toString().trim();
   const propertyTypeId = formData.get("propertyTypeId")?.toString().trim();
@@ -95,7 +105,7 @@ export const createPropertyAction = async (formData: FormData) => {
   if (!name || !address) {
     return encodedRedirect(
       "error",
-      "/protected/properties",
+      errorPath,
       "Name and address are required",
     );
   }
@@ -106,7 +116,7 @@ export const createPropertyAction = async (formData: FormData) => {
   if (!propertyType) {
     return encodedRedirect(
       "error",
-      "/protected/properties",
+      errorPath,
       "Select a property type.",
     );
   }
@@ -116,12 +126,11 @@ export const createPropertyAction = async (formData: FormData) => {
   const unitLabel = formData.get("unitLabel")?.toString().trim();
   const unitFloor = formData.get("unitFloor")?.toString().trim();
   const unitBedrooms = formData.get("unitBedrooms")?.toString().trim();
-  const unitEntitlements = formData.get("unitEntitlements")?.toString().trim();
 
   if (oa && !associationRegistrationNumber) {
     return encodedRedirect(
       "error",
-      "/protected/properties",
+      errorPath,
       "Enter the OA number for an owners’ association property.",
     );
   }
@@ -129,32 +138,29 @@ export const createPropertyAction = async (formData: FormData) => {
   if (independent && !unitLabel) {
     return encodedRedirect(
       "error",
-      "/protected/properties",
+      errorPath,
       "Enter the unit number — independent properties have exactly one unit.",
     );
   }
 
   const floorValue = unitFloor ? Number(unitFloor) : null;
   const bedroomsValue = unitBedrooms ? Number(unitBedrooms) : null;
-  const entitlementsValue = unitEntitlements ? Number(unitEntitlements) : null;
+  // Independent properties are created with their one unit, so the area is
+  // required here; every other type adds units later, where it is required too.
+  const unitArea = parseAreaSqm(formData.get("unitAreaSqm"), {
+    required: independent,
+  });
+  if (!unitArea.ok) {
+    return encodedRedirect("error", errorPath, unitArea.error);
+  }
   if (unitFloor && !Number.isInteger(floorValue)) {
-    return encodedRedirect("error", "/protected/properties", "Floor must be a whole number.");
+    return encodedRedirect("error", errorPath, "Floor must be a whole number.");
   }
   if (unitBedrooms && (!Number.isInteger(bedroomsValue) || (bedroomsValue ?? 0) < 0)) {
     return encodedRedirect(
       "error",
-      "/protected/properties",
+      errorPath,
       "Beds must be a non-negative whole number.",
-    );
-  }
-  if (
-    unitEntitlements &&
-    (!Number.isInteger(entitlementsValue) || (entitlementsValue ?? 0) < 0)
-  ) {
-    return encodedRedirect(
-      "error",
-      "/protected/properties",
-      "Entitlement must be a non-negative whole number.",
     );
   }
 
@@ -166,13 +172,26 @@ export const createPropertyAction = async (formData: FormData) => {
   ) {
     return encodedRedirect(
       "error",
-      "/protected/properties",
+      errorPath,
       "Select a valid Oman governorate.",
     );
   }
 
   const permissions = defaultUnitPermissions(propertyType);
 
+  // An admin adding a property from an owner's card links the unit to them.
+  const requestedOwnerId = formData.get("ownerId")?.toString();
+  const adminChosenOwnerId =
+    !isOwner && requestedOwnerId
+      ? ((
+          await prisma.user.findFirst({
+            where: { id: requestedOwnerId, userType: UserType.owner },
+            select: { id: true },
+          })
+        )?.id ?? null)
+      : null;
+
+  const createdUnit: { id?: string } = {};
   const property = await prisma.$transaction(async (tx) => {
     const created = await tx.property.create({
       data: {
@@ -196,22 +215,56 @@ export const createPropertyAction = async (formData: FormData) => {
     });
 
     if (independent && unitLabel) {
-      await tx.unit.create({
+      const unitRow = await tx.unit.create({
         data: {
           propertyId: created.id,
           label: unitLabel,
           floor: propertyType.hasFloors ? floorValue : null,
           bedrooms: propertyType.hasBedrooms ? bedroomsValue : null,
-          entitlements: entitlementsValue,
-          ownerId: isOwner ? actor.id : null,
+          areaSqm: unitArea.value,
+          ownerId: isOwner ? actor.id : adminChosenOwnerId,
           rentBillsEnabled: permissions.rentBillsEnabled,
           maintenanceEnabled: permissions.maintenanceEnabled,
         },
       });
+      createdUnit.id = unitRow.id;
     }
 
     return created;
   });
+
+  // Key documents captured at creation (independent = exactly one unit):
+  // SPA, Mulkiya and Krooky against the unit, and — for an owner creating
+  // their own property — their ID/Bataka against themselves. Optional; a
+  // failed upload never blocks the property itself.
+  try {
+    if (createdUnit.id) {
+      await storeEntityDocumentGroups({
+        target: { type: "unit", id: createdUnit.id },
+        uploadedById: actor.id,
+        groups: [
+          { category: EntityDocumentCategory.sales_purchase_agreement, files: uploadedFiles(formData, "docSpa") },
+          { category: EntityDocumentCategory.ownership_certificate, files: uploadedFiles(formData, "docMulkiya") },
+          { category: EntityDocumentCategory.cadastral_plan, files: uploadedFiles(formData, "docKrooky") },
+        ],
+      });
+    }
+    if (isOwner) {
+      await storeEntityDocumentGroups({
+        target: { type: "user", id: actor.id },
+        uploadedById: actor.id,
+        groups: [
+          {
+            category: EntityDocumentCategory.civil_id,
+            expiresAt: parseDate(formData.get("docOwnerIdExpiry")?.toString()),
+            files: uploadedFiles(formData, "docOwnerId"),
+          },
+        ],
+      });
+    }
+  } catch (error) {
+    console.error("Key document upload failed for property:", property.id, error);
+  }
 
   try {
     await pushPropertyToDynamics({
@@ -231,7 +284,7 @@ export const createPropertyAction = async (formData: FormData) => {
 
   return encodedRedirect(
     "success",
-    `/protected/properties/${property.id}`,
+    stayOnPeople ?? `/protected/properties/${property.id}`,
     independent
       ? `"${name}" created with its ${propertyType.unitNounSingular.toLowerCase()}.`
       : oa
@@ -693,7 +746,7 @@ export const updateUnitServiceChargeAction = async (formData: FormData) => {
     return encodedRedirect(
       "error",
       `/protected/properties/${unit.propertyId}`,
-      "Independent properties do not take a service charge.",
+      "Independent and building-management properties do not take a service charge.",
     );
   }
 
@@ -814,7 +867,7 @@ export const bulkSetUnitServiceChargeAction = async (formData: FormData) => {
     return encodedRedirect(
       "error",
       back,
-      "Independent properties do not take a service charge.",
+      "Independent and building-management properties do not take a service charge.",
     );
   }
 
@@ -1059,15 +1112,21 @@ export const generateUnitsAction = async (formData: FormData) => {
   const bedrooms = formData.get("bedrooms")
     ? Number(formData.get("bedrooms"))
     : null;
-  const entitlements = formData.get("entitlements")
-    ? Number(formData.get("entitlements"))
-    : null;
+  const area = parseAreaSqm(formData.get("areaSqm"), { required: true });
 
   if (!propertyId) {
     return encodedRedirect(
       "error",
       "/protected/properties",
       "Invalid property",
+    );
+  }
+
+  if (!area.ok) {
+    return encodedRedirect(
+      "error",
+      `/protected/properties/${propertyId}`,
+      area.error,
     );
   }
 
@@ -1144,7 +1203,7 @@ export const generateUnitsAction = async (formData: FormData) => {
         label: `${floor}${String(n).padStart(2, "0")}`,
         floor,
         bedrooms,
-        entitlements,
+        areaSqm: area.value,
         ownerId: generatedOwnerId,
         rentBillsEnabled,
         maintenanceEnabled,
@@ -1181,9 +1240,6 @@ export const createUnitAction = async (formData: FormData) => {
   const bedrooms = formData.get("bedrooms")
     ? Number(formData.get("bedrooms"))
     : null;
-  const entitlements = formData.get("entitlements")
-    ? Number(formData.get("entitlements"))
-    : null;
   // Only an admin can hand a unit to an existing owner; an owner adding a
   // unit is always assigned to themselves.
   const ownerId = isOwner
@@ -1196,15 +1252,21 @@ export const createUnitAction = async (formData: FormData) => {
   let rentBillsEnabled = formData.get("rentBillsEnabled") === "on";
   let maintenanceEnabled = formData.get("maintenanceEnabled") === "on";
 
+  // A form embedded elsewhere (e.g. an owner's card on the People page) can
+  // ask to come back to where it was opened instead of the property page.
+  const backRaw = formData.get("back")?.toString();
+  const back = backRaw?.startsWith("/protected")
+    ? backRaw
+    : `/protected/properties/${propertyId ?? ""}`;
+
   if (!propertyId || !label) {
-    return encodedRedirect(
-      "error",
-      `/protected/properties/${propertyId ?? ""}`,
-      "Unit number is required",
-    );
+    return encodedRedirect("error", back, "Unit number is required");
   }
 
-  const back = `/protected/properties/${propertyId}`;
+  const area = parseAreaSqm(formData.get("areaSqm"), { required: true });
+  if (!area.ok) {
+    return encodedRedirect("error", back, area.error);
+  }
 
   if (!(await ownerCanManageUnitsOn(actor, propertyId))) {
     return encodedRedirect(
@@ -1254,9 +1316,10 @@ export const createUnitAction = async (formData: FormData) => {
   }
 
   // A blank charge is fine (no service charge tracked); a partial one isn't.
-  // Independent properties never take SC — ignore any charge fields posted.
+  // Independent and building-management properties never take SC — ignore
+  // any charge fields posted.
   const chargeFieldsFilled =
-    !(property && isIndependentType(property.propertyType)) &&
+    !(property && !collectsServiceCharge(property.propertyType)) &&
     [
       "serviceChargeAmount",
       "serviceChargeCycleMonths",
@@ -1277,7 +1340,7 @@ export const createUnitAction = async (formData: FormData) => {
       label,
       floor,
       bedrooms,
-      entitlements,
+      areaSqm: area.value,
       ownerId,
       rentBillsEnabled,
       maintenanceEnabled,
@@ -1304,6 +1367,7 @@ export const createUnitAction = async (formData: FormData) => {
   await publishDirectoryChange();
 
   revalidatePath(back);
+  revalidatePath(`/protected/properties/${propertyId}`);
 
   return encodedRedirect("success", back, `Unit ${label} added.`);
 };
@@ -1319,7 +1383,6 @@ export const updateUnitAction = async (formData: FormData) => {
   const label = formData.get("label")?.toString().trim();
   const floor = formData.get("floor")?.toString().trim();
   const bedrooms = formData.get("bedrooms")?.toString().trim();
-  const entitlements = formData.get("entitlements")?.toString().trim();
 
   if (!unitId) {
     return encodedRedirect(
@@ -1362,9 +1425,17 @@ export const updateUnitAction = async (formData: FormData) => {
     return encodedRedirect("error", back, "Unit number is required.");
   }
 
+  // Required whenever the form carries the field (the unit edit modal always
+  // does), so a recorded area can't be blanked out.
+  const area = parseAreaSqm(formData.get("areaSqm"), {
+    required: formData.has("areaSqm"),
+  });
+  if (!area.ok) {
+    return encodedRedirect("error", back, area.error);
+  }
+
   const floorValue = floor ? Number(floor) : null;
   const bedroomsValue = bedrooms ? Number(bedrooms) : null;
-  const entitlementsValue = entitlements ? Number(entitlements) : null;
 
   if (floor && (!Number.isInteger(floorValue) || floorValue === null)) {
     return encodedRedirect("error", back, "Floor must be a whole number.");
@@ -1377,16 +1448,6 @@ export const updateUnitAction = async (formData: FormData) => {
       "error",
       back,
       "Bedrooms must be a non-negative whole number.",
-    );
-  }
-  if (
-    entitlements &&
-    (!Number.isInteger(entitlementsValue) || (entitlementsValue ?? 0) < 0)
-  ) {
-    return encodedRedirect(
-      "error",
-      back,
-      "Unit entitlement must be a non-negative whole number.",
     );
   }
 
@@ -1433,7 +1494,9 @@ export const updateUnitAction = async (formData: FormData) => {
       label,
       floor: floorValue,
       bedrooms: bedroomsValue,
-      entitlements: entitlementsValue,
+      // Only touched when the form actually carried the field, so any other
+      // form posting here can't silently blank a recorded area.
+      ...(formData.has("areaSqm") ? { areaSqm: area.value } : {}),
       ownerId,
       rentBillsEnabled,
       maintenanceEnabled,
@@ -1761,12 +1824,19 @@ export const assignTenantAction = async (formData: FormData) => {
   // Not a rich lease-terms email like startTenancyAction's — this quick
   // assignment has none yet (zero-rent placeholder, see above) — but the
   // tenant and owner still deserve to know a move-in happened at all,
-  // which previously sent nothing. Skipped entirely when rent & bills are
-  // off for this unit, since the whole notice is about lease/rent terms.
-  if (isNewAssignment && tenantId && unit.rentBillsEnabled) {
+  // which previously sent nothing.
+  if (isNewAssignment && tenantId) {
     try {
+      const assignedTenant = await prisma.user.findUnique({
+        where: { id: tenantId },
+        select: { firstName: true, lastName: true, email: true },
+      });
       await notifyTenantAssigned({
         tenantId,
+        tenantName: assignedTenant
+          ? [assignedTenant.firstName, assignedTenant.lastName].filter(Boolean).join(" ") || assignedTenant.email
+          : undefined,
+        placeholderTerms: true,
         propertyName: unit.property.name,
         unitLabel: formatUnitLabel(unit.property.propertyType, unit.label),
         moveInDate: format(new Date(), "d MMMM yyyy"),
@@ -1955,6 +2025,18 @@ export const createUserAction = async (formData: FormData) => {
     // rather than leave a login with no profile behind it.
     await createAdminClient().auth.admin.deleteUser(authUser.user.id);
     throw error;
+  }
+
+  // A brand-new regular admin starts with the standard day-to-day set of
+  // permissions (see DEFAULT_ADMIN_MODULE_KEYS) rather than nothing at all —
+  // a super admin can still adjust it afterward from Permissions. Super
+  // admins themselves bypass permission checks entirely and never need
+  // grants.
+  if (userType === UserType.admin) {
+    await prisma.adminModuleGrant.createMany({
+      data: DEFAULT_ADMIN_MODULE_KEYS.map((module) => ({ userId: user.id, module })),
+      skipDuplicates: true,
+    });
   }
 
   if (userType === UserType.user) {
@@ -2153,6 +2235,14 @@ export const updateUserTypeAction = async (formData: FormData) => {
 
   if (existing.userType === UserType.admin && userType !== UserType.admin) {
     await prisma.adminModuleGrant.deleteMany({ where: { userId } });
+  } else if (existing.userType !== UserType.admin && userType === UserType.admin) {
+    // Same starting point as a brand-new admin account — see
+    // DEFAULT_ADMIN_MODULE_KEYS — rather than becoming an admin with
+    // nothing granted at all.
+    await prisma.adminModuleGrant.createMany({
+      data: DEFAULT_ADMIN_MODULE_KEYS.map((module) => ({ userId, module })),
+      skipDuplicates: true,
+    });
   }
 
   // Someone who is no longer a tenant should not still hold an apartment.

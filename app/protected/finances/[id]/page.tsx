@@ -15,6 +15,7 @@ import { notFound } from "next/navigation";
 
 import {
   resendChargeInvoiceEmailAction,
+  resendWaiverNoticeAction,
   reviewPaymentAction,
   submitPaymentAction,
   waiveChargeAction,
@@ -22,6 +23,8 @@ import {
 import { ChargeStatusBadge } from "@/components/charge-status-badge";
 import { FormMessage, Message } from "@/components/form-message";
 import { PageHeader } from "@/components/page-header";
+import { AlertPreviewModal } from "@/components/alert-preview-modal";
+import { EditPaymentModal } from "@/components/edit-payment-modal";
 import { RecordPaymentForm } from "@/components/record-payment-form";
 import { SubmitButton } from "@/components/submit-button";
 import { ButtonLink } from "@/components/ui/button-link";
@@ -33,9 +36,11 @@ import {
   PAYMENT_METHOD_LABEL,
   approvedTotal,
   chargeBalance,
+  dateInputValue,
   formatMoney,
   pendingTotal,
 } from "@/lib/finance";
+import { tenantInvoicePreview, waiveChargePreview } from "@/lib/alert-preview";
 import { prisma } from "@/lib/prisma";
 import { formatUnitLabel } from "@/lib/property-types";
 import { requireUser, isStaffAdmin } from "@/lib/session";
@@ -113,6 +118,8 @@ export default async function FinanceDetailPage({
   // Property owners have read-only access to everything except creating a
   // new property — all charge management is admin-only.
   const canManagePayments = isStaffAdmin(user.userType);
+  const invoicePreview = canManagePayments ? await tenantInvoicePreview(id) : null;
+  const waivePreview = canManagePayments ? await waiveChargePreview(id) : null;
 
   const balance = chargeBalance(charge);
   const approved = approvedTotal(charge.payments);
@@ -350,6 +357,32 @@ export default async function FinanceDetailPage({
                         )}
 
                         {canManagePayments &&
+                          payment.status === PaymentStatus.approved && (
+                            <div className="mt-4 flex justify-end border-t pt-3">
+                              <EditPaymentModal
+                                back={listBack}
+                                chargeAmount={formatMoney(charge.amount)}
+                                payment={{
+                                  id: payment.id,
+                                  amount: Number(payment.amount).toFixed(3),
+                                  paidAt: dateInputValue(payment.paidAt),
+                                  method: payment.method,
+                                  reference: payment.reference ?? "",
+                                  notes: payment.notes ?? "",
+                                  collectedBy: payment.collectedBy,
+                                  receivedByName: payment.receivedByName ?? "",
+                                  transactionNumber: payment.transactionNumber ?? "",
+                                  chequeNumber: payment.chequeNumber ?? "",
+                                  chequeDate: payment.chequeDate
+                                    ? dateInputValue(payment.chequeDate)
+                                    : "",
+                                  bank: payment.bank ?? "",
+                                }}
+                              />
+                            </div>
+                          )}
+
+                        {canManagePayments &&
                           payment.status === PaymentStatus.pending && (
                             <form className="mt-4 space-y-3 border-t pt-4">
                               <input
@@ -428,7 +461,7 @@ export default async function FinanceDetailPage({
             </Card>
           )}
 
-          {canManagePayments && (
+          {canManagePayments && charge.status === ChargeStatus.open && (
             <Card>
               <CardContent className="space-y-3 p-5">
                 <p className="text-sm font-medium">Invoice email</p>
@@ -436,19 +469,41 @@ export default async function FinanceDetailPage({
                   Sends the tenant a fresh copy of this charge's invoice
                   email, with the current amount and due date.
                 </p>
-                <form>
-                  <input type="hidden" name="chargeId" value={charge.id} />
-                  <input type="hidden" name="back" value={listBack} />
-                  <SubmitButton
-                    formAction={resendChargeInvoiceEmailAction}
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    pendingText="Sending..."
-                  >
-                    Resend invoice email
-                  </SubmitButton>
-                </form>
+                {invoicePreview ? (
+                  <AlertPreviewModal
+                    title="Resend invoice"
+                    description="This is exactly what the tenant will receive. Check it, then send."
+                    triggerLabel="Preview & resend invoice"
+                    preview={invoicePreview}
+                    action={resendChargeInvoiceEmailAction}
+                    hiddenFields={{ chargeId: charge.id, back: listBack }}
+                    sendLabel="Send email & WhatsApp"
+                  />
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
+
+          {canManagePayments && charge.status === ChargeStatus.waived && (
+            <Card>
+              <CardContent className="space-y-3 p-5">
+                <p className="text-sm font-medium">Waiver notice</p>
+                <p className="text-xs text-muted-foreground">
+                  This charge was waived, so nothing is due. If the tenant
+                  asks, resend the waiver notice — it says the charge was
+                  waived, not that a payment is due.
+                </p>
+                {waivePreview ? (
+                  <AlertPreviewModal
+                    title="Resend waiver notice"
+                    description="This is exactly what the tenant will receive. Check it, edit if you like, then send."
+                    triggerLabel="Preview & resend waiver notice"
+                    preview={waivePreview}
+                    action={resendWaiverNoticeAction}
+                    hiddenFields={{ chargeId: charge.id, back: listBack }}
+                    sendLabel="Send email & WhatsApp"
+                  />
+                ) : null}
               </CardContent>
             </Card>
           )}
@@ -465,19 +520,17 @@ export default async function FinanceDetailPage({
                     history. It is blocked when a payment is approved or
                     pending.
                   </p>
-                  <form>
-                    <input type="hidden" name="chargeId" value={charge.id} />
-                    <input type="hidden" name="back" value={listBack} />
-                    <SubmitButton
-                      formAction={waiveChargeAction}
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      pendingText="Waiving..."
-                    >
-                      Waive charge
-                    </SubmitButton>
-                  </form>
+                  {waivePreview ? (
+                    <AlertPreviewModal
+                      title="Waive charge"
+                      description="Waiving closes this charge. This is exactly what the tenant will receive — check it, edit if you like, then confirm."
+                      triggerLabel="Preview & waive charge"
+                      preview={waivePreview}
+                      action={waiveChargeAction}
+                      hiddenFields={{ chargeId: charge.id, back: listBack }}
+                      sendLabel="Waive charge & notify tenant"
+                    />
+                  ) : null}
                 </CardContent>
               </Card>
             )}

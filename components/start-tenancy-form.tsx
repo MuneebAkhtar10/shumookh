@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KeyRound } from "lucide-react";
 
 import { startTenancyAction } from "@/app/finance-actions";
@@ -17,6 +17,24 @@ import { UnitPicker, type PickableUnit } from "@/components/unit-picker";
 import { dateInputValue } from "@/lib/finance";
 import { TenancyPurpose } from "@/lib/generated/prisma/client";
 
+/** Values to pre-fill the form with — e.g. read from an uploaded agreement. */
+export type TenancyPrefill = {
+  tenantId?: string;
+  unitId?: string;
+  startDate?: string;
+  leaseEndDate?: string;
+  monthlyRent?: number;
+  rentDueDay?: number;
+  securityDeposit?: number;
+  paidBy?: string;
+  purpose?: "residential" | "commercial";
+  agreementRef?: string;
+  parkingSlotNumber?: string;
+  notes?: string;
+  /** Whether the chosen unit's property type bills rent & bills at all. */
+  chargesEnabled?: boolean;
+};
+
 /**
  * Spec #24 "Tenant Agreement Form" — its own client component so the two
  * charge checkboxes can react to the property type chosen in UnitPicker (a
@@ -26,6 +44,8 @@ import { TenancyPurpose } from "@/lib/generated/prisma/client";
 export function StartTenancyForm({
   availableTenants,
   pickableUnits,
+  prefill,
+  attachFile,
 }: {
   availableTenants: {
     id: string;
@@ -34,21 +54,41 @@ export function StartTenancyForm({
     lastName: string | null;
   }[];
   pickableUnits: PickableUnit[];
+  /** Pre-filled values. Remount the form (change its `key`) to apply new ones. */
+  prefill?: TenancyPrefill;
+  /** The agreement PDF, attached to "Signed tenancy agreement" automatically. */
+  attachFile?: File | null;
 }) {
-  const [chargeDefaultsEnabled, setChargeDefaultsEnabled] = useState(true);
-  const [createFirstRent, setCreateFirstRent] = useState(true);
-  const [createDepositCharge, setCreateDepositCharge] = useState(true);
+  const initialCharges = prefill?.chargesEnabled ?? true;
+  const [chargeDefaultsEnabled, setChargeDefaultsEnabled] = useState(initialCharges);
+  const [createFirstRent, setCreateFirstRent] = useState(initialCharges);
+  const [createDepositCharge, setCreateDepositCharge] = useState(initialCharges);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // A file input can't take a value from React, so hand it the PDF through a
+  // DataTransfer and fire the change event the upload guard listens for.
+  useEffect(() => {
+    if (!attachFile || !formRef.current) return;
+    const input = formRef.current.querySelector<HTMLInputElement>(
+      'input[name="tenancyAgreementDocuments"]',
+    );
+    if (!input) return;
+    const transfer = new DataTransfer();
+    transfer.items.add(attachFile);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, [attachFile]);
 
   return (
     <UploadBudgetProvider>
-      <form className="space-y-4" encType="multipart/form-data">
+      <form ref={formRef} className="space-y-4" encType="multipart/form-data">
         <h3 className="text-sm font-semibold">Tenant Agreement Form</h3>
         <div className="rounded-lg border border-[#0886be]/25 bg-[#0886be]/10 p-3 text-xs text-[#075e82]">
           Oman record checklist: keep the tenant Civil ID under People, title
           deed/plot under Property, and add the municipality contract below.
         </div>
         <Field label="Tenant">
-          <Select name="tenantId" required defaultValue="">
+          <Select name="tenantId" required defaultValue={prefill?.tenantId ?? ""}>
             <option value="" disabled>
               Select tenant
             </option>
@@ -66,6 +106,7 @@ export function StartTenancyForm({
           id="new-tenancy-unit"
           name="unitId"
           units={pickableUnits}
+          defaultUnitId={prefill?.unitId}
           required
           onPropertyTypeChange={(propertyType) => {
             const enabled = propertyType ? propertyType.showRentBills : true;
@@ -82,12 +123,12 @@ export function StartTenancyForm({
             <Input
               name="startDate"
               type="date"
-              defaultValue={dateInputValue()}
+              defaultValue={prefill?.startDate ?? dateInputValue()}
               required
             />
           </Field>
           <Field label="Lease end">
-            <Input name="leaseEndDate" type="date" />
+            <Input name="leaseEndDate" type="date" defaultValue={prefill?.leaseEndDate} />
           </Field>
         </div>
 
@@ -98,6 +139,7 @@ export function StartTenancyForm({
               type="number"
               min={0}
               step="0.001"
+              defaultValue={prefill?.monthlyRent}
               required
             />
           </Field>
@@ -107,7 +149,7 @@ export function StartTenancyForm({
               type="number"
               min={1}
               max={28}
-              defaultValue={5}
+              defaultValue={prefill?.rentDueDay ?? 5}
               required
             />
           </Field>
@@ -119,7 +161,7 @@ export function StartTenancyForm({
             type="number"
             min={0}
             step="0.001"
-            defaultValue={0}
+            defaultValue={prefill?.securityDeposit ?? 0}
             required
           />
         </Field>
@@ -127,12 +169,13 @@ export function StartTenancyForm({
         <Field label="Paid by">
           <Input
             name="paidBy"
+            defaultValue={prefill?.paidBy}
             placeholder="e.g. the tenant themselves, or a sponsoring employer"
           />
         </Field>
 
         <Field label="Lease purpose">
-          <Select name="purpose" defaultValue={TenancyPurpose.residential}>
+          <Select name="purpose" defaultValue={prefill?.purpose ?? TenancyPurpose.residential}>
             <option value={TenancyPurpose.residential}>Residential</option>
             <option value={TenancyPurpose.commercial}>Commercial</option>
           </Select>
@@ -142,7 +185,7 @@ export function StartTenancyForm({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Parking slot number">
-            <Input name="parkingSlotNumber" placeholder="e.g. P-14" />
+            <Input name="parkingSlotNumber" defaultValue={prefill?.parkingSlotNumber} placeholder="e.g. P-14" />
           </Field>
           <Field label="Vehicle plate number">
             <Input name="vehiclePlateNumber" placeholder="e.g. 12345 / A" />
@@ -163,6 +206,7 @@ export function StartTenancyForm({
         <Field label="Agreement number">
           <Input
             name="agreementRef"
+            defaultValue={prefill?.agreementRef}
             placeholder="e.g. 20260048714"
           />
         </Field>
@@ -189,6 +233,7 @@ export function StartTenancyForm({
         <Field label="Notes">
           <Textarea
             name="notes"
+            defaultValue={prefill?.notes}
             className="min-h-20"
             placeholder="Occupants and special terms…"
           />

@@ -10,6 +10,8 @@ export function SummaryTile({
   value,
   label,
   sublabel,
+  aside,
+  progress,
   accent = "bg-slate-400",
   iconBg = "bg-slate-50 text-slate-600",
   href,
@@ -19,6 +21,11 @@ export function SummaryTile({
   value: React.ReactNode;
   label: string;
   sublabel?: string;
+  /** Content pinned to the right edge of the tile (e.g. a bold area
+   * breakdown) — keeps the tile as short as its neighbours. */
+  aside?: React.ReactNode;
+  /** 0–100: draws a thin progress bar along the tile's bottom edge. */
+  progress?: number;
   /** Top accent bar color, e.g. "bg-emerald-500". */
   accent?: string;
   /** Icon badge background + text color, e.g. "bg-emerald-50 text-emerald-600". */
@@ -47,6 +54,11 @@ export function SummaryTile({
           </p>
         )}
       </div>
+      {aside && (
+        <div className="ml-auto shrink-0 border-l border-border/60 pl-3 text-right">
+          {aside}
+        </div>
+      )}
     </>
   );
 
@@ -59,6 +71,14 @@ export function SummaryTile({
       }`}
     >
       <span className={`absolute inset-x-0 top-0 h-1 ${accent}`} />
+      {progress !== undefined && (
+        <span className="absolute inset-x-0 bottom-0 h-1 bg-slate-200">
+          <span
+            className="block h-full bg-[#23abb5]"
+            style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+          />
+        </span>
+      )}
       {href ? (
         <PendingLink
           href={href}

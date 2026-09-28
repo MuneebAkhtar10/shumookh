@@ -212,3 +212,137 @@ Reply in 1-2 short sentences. If they asked something specific the facts above d
 
   return callGemini(prompt);
 }
+
+/**
+ * Models tried, all at once, for reading documents — the first valid answer
+ * wins. The Lite models are listed first because Google's full Flash models
+ * are frequently overloaded (503) and a failing call can take 25–30 seconds to
+ * come back; racing several means one busy model can't hold the person up.
+ * Override with GEMINI_READER_MODELS (comma-separated).
+ */
+const READER_MODELS = (
+  process.env.GEMINI_READER_MODELS ||
+  "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite-latest,gemini-3.6-flash"
+)
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+class ModelCallError extends Error {
+  constructor(
+    readonly model: string,
+    readonly status: number,
+  ) {
+    super(`${model} -> ${status}`);
+  }
+}
+
+/**
+ * Reads a PDF (typed, scanned or handwritten — Arabic and English) and returns
+ * structured JSON matching `schema`. Unlike the WhatsApp helpers above this one
+ * reports WHY it failed, because a person is waiting on the result and needs to
+ * know whether to retry, fix the key, or fill the form by hand.
+ */
+export async function extractJsonFromPdf<T>(input: {
+  pdfBase64: string;
+  prompt: string;
+  /** Gemini responseSchema (OpenAPI subset). */
+  schema: unknown;
+  /** An answer missing the essentials is not accepted while other models may
+   * still return a fuller one (the fastest, smallest model is sometimes lazy). */
+  accept?: (data: T) => boolean;
+  /** Ranks incomplete answers, used only if no model gives an acceptable one. */
+  score?: (data: T) => number;
+}): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: "Reading PDFs isn't set up yet — GEMINI_API_KEY is missing on the server.",
+    };
+  }
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { inlineData: { mimeType: "application/pdf", data: input.pdfBase64 } },
+          { text: input.prompt },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0,
+      // Room for the model's internal reasoning as well as the JSON.
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+      responseSchema: input.schema,
+    },
+  };
+
+  const askModel = async (model: string): Promise<T> => {
+    const { status, body } = await postJson(
+      `/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      payload,
+      70_000,
+    );
+    if (status < 200 || status >= 300) {
+      console.error(`[gemini] ${model} failed (${status}): ${body.slice(0, 200)}`);
+      throw new ModelCallError(model, status);
+    }
+    try {
+      const candidate = JSON.parse(body)?.candidates?.[0];
+      const text: string | undefined = candidate?.content?.parts?.find(
+        (part: { text?: string }) => typeof part.text === "string",
+      )?.text;
+      if (!text || candidate?.finishReason === "MAX_TOKENS") throw new Error("empty");
+      return JSON.parse(text) as T;
+    } catch {
+      console.error(`[gemini] ${model} returned an unreadable answer`);
+      throw new ModelCallError(model, 0);
+    }
+  };
+
+  const partials: T[] = [];
+  const askAcceptable = async (model: string): Promise<T> => {
+    const data = await askModel(model);
+    if (input.accept && !input.accept(data)) {
+      console.error(`[gemini] ${model} answered but left out essential fields`);
+      partials.push(data);
+      throw new ModelCallError(model, 0);
+    }
+    return data;
+  };
+  const race = () => Promise.any(READER_MODELS.map(askAcceptable));
+
+  try {
+    try {
+      return { ok: true, data: await race() };
+    } catch (first) {
+      // Everything was busy or unavailable — pause once and try the lot again.
+      const errors = (first as AggregateError).errors as ModelCallError[];
+      const anyBusy = errors.some((e) => e.status === 429 || e.status >= 500);
+      if (!anyBusy) throw first;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      return { ok: true, data: await race() };
+    }
+  } catch (error) {
+    // No model produced a complete answer — an incomplete one is still worth
+    // showing (the person fills the gaps) rather than nothing at all.
+    if (partials.length > 0) {
+      const best = input.score
+        ? [...partials].sort((a, b) => input.score!(b) - input.score!(a))[0]
+        : partials[0];
+      return { ok: true, data: best };
+    }
+    const errors = ((error as AggregateError).errors ?? []) as ModelCallError[];
+    const busy = errors.some((e) => e.status === 429 || e.status >= 500);
+    console.error("[gemini] document read failed:", errors.map((e) => e.message).join(", "));
+    return {
+      ok: false,
+      error: busy
+        ? "The reading service is busy right now. Wait a moment and try again, or fill the form by hand."
+        : "The reading service couldn't process this PDF. You can fill the form by hand instead.",
+    };
+  }
+}

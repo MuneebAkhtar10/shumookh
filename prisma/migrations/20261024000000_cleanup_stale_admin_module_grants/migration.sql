@@ -1,0 +1,11 @@
+-- Intentionally a no-op.
+--
+-- This migration originally deleted every admin_module_grants row whose
+-- module wasn't one of the 17 top-level modules, on the belief that the
+-- "prop_*" enum values were dead leftovers. They are not: they are the
+-- per-button Properties permissions (see 20261015000000_property_button_
+-- permissions_enum and its backfill), so that DELETE would strip those
+-- permissions from every admin. Kept as an empty migration so databases
+-- that already recorded it stay in step; 20261026000000_restore_property_
+-- button_grants re-grants anything it removed.
+SELECT 1;

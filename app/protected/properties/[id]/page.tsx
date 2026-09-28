@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   AlertCircle,
   AlertTriangle,
@@ -63,6 +64,7 @@ import {
 import { PendingLink } from "@/components/ui/pending-link";
 import { UnitManageModal } from "@/components/unit-manage-modal";
 import { toManagedUnit } from "@/lib/managed-unit";
+import { areaValue, computeSpaceStats, formatSqm } from "@/lib/unit-area";
 import { formatMoney, formatMoneyCompact } from "@/lib/finance";
 import { formatOmanAddress, OMAN_GOVERNORATES } from "@/lib/oman";
 import {
@@ -82,7 +84,9 @@ import { getRentPositionData } from "@/lib/rent-position";
 import { SummaryTile } from "@/components/summary-tile";
 import { cn, personDisplayName } from "@/lib/utils";
 import { prisma } from "@/lib/prisma";
+import { personVisibilityWhere, visiblePersonCategories } from "@/lib/permissions";
 import { requireAnyRole, isStaffAdmin } from "@/lib/session";
+import { adminAccess } from "@/lib/permissions";
 import { UserType } from "@/lib/generated/prisma/client";
 import { PageProps } from "@/types/page";
 
@@ -142,6 +146,8 @@ export default async function PropertyDetailPage({
     contract?: string;
     charge?: string;
     occupancy?: string;
+    areaMin?: string;
+    areaMax?: string;
     q?: string;
   } & Message;
   const message = rawParams as Message;
@@ -155,9 +161,18 @@ export default async function PropertyDetailPage({
     typeof rawParams.occupancy === "string" ? rawParams.occupancy : "all";
   const search =
     typeof rawParams.q === "string" ? rawParams.q.trim() : "";
+  // Area range (m²). Blank / non-positive means "no bound".
+  const parseBound = (raw: unknown): number | null => {
+    const n = typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const areaMin = parseBound(rawParams.areaMin);
+  const areaMax = parseBound(rawParams.areaMax);
 
   const user = await requireAnyRole(UserType.admin, UserType.owner);
+  const { can } = await adminAccess(user);
   const isAdmin = isStaffAdmin(user.userType);
+  const personWhere = personVisibilityWhere(await visiblePersonCategories(user));
   const isOwner = user.userType === UserType.owner;
 
   const property = await prisma.property.findUnique({
@@ -260,16 +275,17 @@ export default async function PropertyDetailPage({
     expenseCategories,
     expenseSuppliers,
     propertyExpenses,
+    unbilledExpenses,
   ] = await Promise.all([
       prisma.user.findMany({
-        where: { userType: UserType.user, unit: null },
+        where: { AND: [{ userType: UserType.user, unit: null }, personWhere] },
         orderBy: { email: "asc" },
         select: { id: true, email: true, firstName: true, lastName: true },
       }),
       prisma.propertyType.findMany({ orderBy: { createdAt: "asc" } }),
       isAdmin
         ? prisma.user.findMany({
-            where: { userType: UserType.owner },
+            where: { AND: [{ userType: UserType.owner }, personWhere] },
             select: { id: true, email: true, firstName: true, lastName: true },
             orderBy: { email: "asc" },
           })
@@ -321,6 +337,25 @@ export default async function PropertyDetailPage({
           amount: true,
           paidBy: true,
           category: { select: { label: true } },
+        },
+      }),
+      // Expenses on this property's units that no invoice has billed yet —
+      // what the "Generate invoice → from existing expenses" option offers.
+      prisma.expense.findMany({
+        where: {
+          invoiceId: null,
+          ownerChargeMethod: "extra_charge",
+          units: { some: { unit: { propertyId: id } } },
+        },
+        orderBy: { date: "desc" },
+        select: {
+          id: true,
+          date: true,
+          description: true,
+          amount: true,
+          vatAmount: true,
+          category: { select: { label: true } },
+          units: { select: { unitId: true } },
         },
       }),
     ]);
@@ -382,6 +417,9 @@ export default async function PropertyDetailPage({
       monthlyRent: Number(unit.tenancies[0].monthlyRent ?? 0),
     }));
   const occupied = property.units.filter((u) => u.tenant).length;
+  const space = computeSpaceStats(
+    property.units.map((u) => ({ areaSqm: u.areaSqm, tenantId: u.tenantId })),
+  );
   const scheduledMonthlyRent = property.units.reduce(
     (total, unit) => total + Number(unit.tenancies[0]?.monthlyRent ?? 0),
     0,
@@ -465,6 +503,9 @@ export default async function PropertyDetailPage({
     }
     if (occupancyFilter === "occupied" && !unit.tenant) return false;
     if (occupancyFilter === "empty" && unit.tenant) return false;
+    const unitArea = areaValue(unit.areaSqm);
+    if (areaMin !== null && (unitArea === null || unitArea < areaMin)) return false;
+    if (areaMax !== null && (unitArea === null || unitArea > areaMax)) return false;
     const tone = chargeToneFor(unit);
     if (chargeFilter === "due" && tone !== "overdue" && tone !== "dueSoon") {
       return false;
@@ -504,6 +545,8 @@ export default async function PropertyDetailPage({
     if (contract !== "all") query.set("contract", contract);
     if (charge !== "all") query.set("charge", charge);
     if (occupancy !== "all") query.set("occupancy", occupancy);
+    if (areaMin !== null) query.set("areaMin", String(areaMin));
+    if (areaMax !== null) query.set("areaMax", String(areaMax));
     const qs = query.toString();
     return `/protected/properties/${property.id}${qs ? `?${qs}` : ""}`;
   };
@@ -512,7 +555,12 @@ export default async function PropertyDetailPage({
     contractFilter !== "all" ||
     chargeFilter !== "all" ||
     occupancyFilter !== "all" ||
+    areaMin !== null ||
+    areaMax !== null ||
     Boolean(search);
+  const filteredSpace = computeSpaceStats(
+    displayedUnits.map((u) => ({ areaSqm: u.areaSqm, tenantId: u.tenantId })),
+  );
 
   // Shared between the summary tile's modal and the header's "Suppliers"
   // quick-link below — both open the same list, just triggered from two
@@ -527,7 +575,16 @@ export default async function PropertyDetailPage({
         {propertySuppliers.map((supplier) => (
           <div key={supplier.id} className="rounded-lg border border-border/60 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-medium">{supplier.companyName}</p>
+              {isAdmin ? (
+                <Link
+                  href={`/protected/admin/suppliers/${supplier.id}/edit`}
+                  className="font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  {supplier.companyName}
+                </Link>
+              ) : (
+                <p className="font-medium">{supplier.companyName}</p>
+              )}
               <span
                 className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
                   supplier.availableForAllProperties
@@ -622,7 +679,8 @@ export default async function PropertyDetailPage({
             Property records
           </p>
           <div className="flex flex-wrap gap-1.5">
-            <Tooltip label="Vendor agreements for this building — lift, fire, pest control, and other shared services.">
+            {can("prop_building_contracts") && (
+<Tooltip label="Vendor agreements for this building — lift, fire, pest control, and other shared services.">
               <ButtonLink
                 href={`/protected/properties/${property.id}/building-contracts`}
                 variant="outline"
@@ -633,7 +691,9 @@ export default async function PropertyDetailPage({
                 Building Contracts
               </ButtonLink>
             </Tooltip>
-            <Tooltip label="Lease terms and tenancy records for units on this property.">
+)}
+            {can("prop_tenancy_terms") && (
+<Tooltip label="Lease terms and tenancy records for units on this property.">
               <ButtonLink
                 href="/protected/tenancies"
                 variant="outline"
@@ -644,7 +704,9 @@ export default async function PropertyDetailPage({
                 Tenancy terms
               </ButtonLink>
             </Tooltip>
-            <Tooltip label="Occupancy and tenancy details for tenants on this property.">
+)}
+            {can("prop_tenant_report") && (
+<Tooltip label="Occupancy and tenancy details for tenants on this property.">
               <ButtonLink
                 href={`/protected/tenancies/report?property=${property.id}`}
                 variant="outline"
@@ -652,10 +714,12 @@ export default async function PropertyDetailPage({
                 className="bg-background"
               >
                 <ToolbarIcon icon={ClipboardList} className="bg-teal-100 text-teal-600" />
-                Tenant Report
+                List of Tenants
               </ButtonLink>
             </Tooltip>
-            <Tooltip label="Income and charges summary for the owner(s) of this property.">
+)}
+            {can("prop_owner_report") && (
+<Tooltip label="Income and charges summary for the owner(s) of this property.">
               <ButtonLink
                 href={
                   distinctOwners.length === 1
@@ -667,13 +731,16 @@ export default async function PropertyDetailPage({
                 className="bg-background"
               >
                 <ToolbarIcon icon={FileBarChart} className="bg-purple-100 text-purple-600" />
-                Owner Report
+                List of Owners
               </ButtonLink>
             </Tooltip>
-            {managementCategory === "independent" && (
-              <Tooltip label="Download the landlord statement — rent collected versus expenses for a tenancy.">
+)}
+            {managementCategory === "independent" && can("prop_landlord_statement") && (
+<Tooltip label="Download the landlord statement — rent collected versus expenses for a tenancy.">
                 <RentStatementModal
                   options={activeStatementTenancies}
+                  canDownloadPdf={can("download_pdf")}
+                  canDownloadExcel={can("download_excel")}
                   trigger={
                     <Button
                       type="button"
@@ -688,18 +755,24 @@ export default async function PropertyDetailPage({
                 />
               </Tooltip>
             )}
-            {(managementCategory === "independent" || managementCategory === "bm") && (
+            {(managementCategory === "independent" || managementCategory === "bm") &&
+              can("prop_services_invoice") && (
               <ServicesInvoiceMenu
                 propertyId={property.id}
+                defaultFundId={funds[0]?.id ?? ""}
+                categories={expenseCategories.map((category) => category.label)}
                 units={property.units.map((unit) => ({
-                  unitId: unit.id,
-                  unitLabel: formatUnitLabel(propertyType, unit.label),
-                  ownerName: unit.owner
-                    ? personDisplayName(unit.owner)
-                    : "Unassigned owner",
-                  tenantName: unit.tenant
-                    ? personDisplayName(unit.tenant)
-                    : null,
+                  id: unit.id,
+                  label: formatUnitLabel(propertyType, unit.label),
+                  ownerName: unit.owner ? personDisplayName(unit.owner) : null,
+                }))}
+                expenses={unbilledExpenses.map((expense) => ({
+                  id: expense.id,
+                  unitIds: expense.units.map((u) => u.unitId),
+                  date: format(expense.date, "dd MMM yyyy"),
+                  category: expense.category.label,
+                  description: expense.description,
+                  total: Number(expense.amount) + Number(expense.vatAmount),
                 }))}
               />
             )}
@@ -711,8 +784,8 @@ export default async function PropertyDetailPage({
             Reports &amp; ledgers
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {managementCategory === "oa" && (
-              <Tooltip label="Planned income and expenditure for this property’s budget year.">
+            {managementCategory === "oa" && can("prop_annual_budget") && (
+<Tooltip label="Planned income and expenditure for this property’s budget year.">
                 <ButtonLink
                   href={`/protected/properties/${property.id}/budget/${new Date().getFullYear()}`}
                   variant="outline"
@@ -724,8 +797,8 @@ export default async function PropertyDetailPage({
                 </ButtonLink>
               </Tooltip>
             )}
-            {isPropertyBuildingManagementType && (
-              <Tooltip label="Rent collected versus company-paid expenses for the selected period.">
+            {isPropertyBuildingManagementType && can("prop_management_report") && (
+<Tooltip label="Rent collected versus company-paid expenses for the selected period.">
                 <ButtonLink
                   href={`/protected/properties/${property.id}/building-management-report`}
                   variant="outline"
@@ -737,8 +810,8 @@ export default async function PropertyDetailPage({
                 </ButtonLink>
               </Tooltip>
             )}
-            {isIndependentType(propertyType) && (
-              <Tooltip label="Rent collected versus company-paid expenses for the selected period.">
+            {isIndependentType(propertyType) && can("prop_management_report") && (
+<Tooltip label="Rent collected versus company-paid expenses for the selected period.">
                 <ButtonLink
                   href={`/protected/properties/${property.id}/building-management-report`}
                   variant="outline"
@@ -750,7 +823,8 @@ export default async function PropertyDetailPage({
                 </ButtonLink>
               </Tooltip>
             )}
-            <Tooltip label="Vendors eligible to work on this property — linked here or available portfolio-wide.">
+            {can("prop_suppliers") && (
+<Tooltip label="Vendors eligible to work on this property — linked here or available portfolio-wide.">
               <Modal
                 trigger={
                   <Button
@@ -774,7 +848,9 @@ export default async function PropertyDetailPage({
                 {suppliersModalContent}
               </Modal>
             </Tooltip>
-            <PropertyExpensesMenu
+)}
+            {can("prop_expenses") && (
+<PropertyExpensesMenu
               propertyId={property.id}
               propertyName={property.name}
               back={`/protected/properties/${property.id}`}
@@ -787,6 +863,7 @@ export default async function PropertyDetailPage({
                     propertyType: {
                       name: propertyType.name,
                       isOwnerAssociation: propertyType.isOwnerAssociation,
+                      noServiceCharge: !takesServiceCharge,
                     },
                   },
                 ],
@@ -807,8 +884,9 @@ export default async function PropertyDetailPage({
                 paidBy: expense.paidBy,
               }))}
             />
-            {tracksRent && (
-              <Tooltip label="Which units are paid up, due, or overdue on rent.">
+)}
+            {tracksRent && can("prop_rent_position") && (
+<Tooltip label="Which units are paid up, due, or overdue on rent.">
                 <ButtonLink
                   href={`/protected/finances/rent-position?property=${property.id}`}
                   variant="outline"
@@ -820,7 +898,8 @@ export default async function PropertyDetailPage({
                 </ButtonLink>
               </Tooltip>
             )}
-            <Tooltip label="Open and billed owner invoices for this property, including unit-level additional charges.">
+            {can("prop_invoices") && (
+<Tooltip label="Open and billed owner invoices for this property, including unit-level additional charges.">
               <ButtonLink
                 href={`/protected/invoices?property=${property.id}&bucket=billed`}
                 variant="outline"
@@ -831,9 +910,11 @@ export default async function PropertyDetailPage({
                 Invoices
               </ButtonLink>
             </Tooltip>
+)}
             {takesServiceCharge && (
               <>
-            <Tooltip label="Per-unit service-charge invoices, payments, and balances.">
+            {can("prop_unit_ledgers") && (
+<Tooltip label="Per-unit service-charge invoices, payments, and balances.">
               <ButtonLink
                 href={`/protected/properties/${property.id}/unit-ledgers`}
                 variant="outline"
@@ -844,7 +925,9 @@ export default async function PropertyDetailPage({
                 Unit Ledgers
               </ButtonLink>
             </Tooltip>
-            <Tooltip label="Service-charge invoices and collections for this property.">
+)}
+            {can("prop_service_charge") && (
+<Tooltip label="Service-charge invoices and collections for this property.">
               <ButtonLink
                 href={`/protected/service-charge-ledger?property=${property.id}`}
                 variant="outline"
@@ -855,7 +938,9 @@ export default async function PropertyDetailPage({
                 Service Charge
               </ButtonLink>
             </Tooltip>
-            <Tooltip label="How much service charge is billed versus collected on each unit.">
+)}
+            {can("prop_collection_position") && (
+<Tooltip label="How much service charge is billed versus collected on each unit.">
               <ButtonLink
                 href={`/protected/service-charge-ledger/collection-position?property=${property.id}`}
                 variant="outline"
@@ -866,7 +951,9 @@ export default async function PropertyDetailPage({
                 Collection Position
               </ButtonLink>
             </Tooltip>
-            <Tooltip label="Detailed cash-flow statement — service-charge revenue and expenditure for a date range.">
+)}
+            {can("prop_cash_flow") && (
+<Tooltip label="Detailed cash-flow statement — service-charge revenue and expenditure for a date range.">
               <CashFlowStatementModal
                 properties={[{ id: property.id, name: property.name }]}
                 defaultPropertyId={property.id}
@@ -878,6 +965,7 @@ export default async function PropertyDetailPage({
                 }
               />
             </Tooltip>
+)}
               </>
             )}
           </div>
@@ -944,7 +1032,7 @@ export default async function PropertyDetailPage({
         <FormMessage message={message} />
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,21rem))] gap-3">
         <SummaryTile
           icon={<DoorOpen className="h-4 w-4" />}
           value={property.units.length}
@@ -964,6 +1052,25 @@ export default async function PropertyDetailPage({
           value={`${occupied}/${property.units.length}`}
           label="Occupied"
           sublabel={`${property.units.length - occupied} empty`}
+          progress={space.unitsWithArea > 0 ? space.occupiedPct : undefined}
+          aside={
+            space.unitsWithArea > 0 ? (
+              <>
+                <p className="whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-teal-700">
+                  {formatSqm(space.occupiedSqm)}
+                  <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    occupied
+                  </span>
+                </p>
+                <p className="mt-0.5 whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-slate-900">
+                  {formatSqm(space.vacantSqm)}
+                  <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    vacant
+                  </span>
+                </p>
+              </>
+            ) : undefined
+          }
           accent="bg-emerald-500"
           iconBg="bg-emerald-50 text-emerald-600"
           href={buildFilterHref({
@@ -1130,6 +1237,50 @@ export default async function PropertyDetailPage({
                     {chargeFilter !== "all" && (
                       <input type="hidden" name="charge" value={chargeFilter} />
                     )}
+                    <div className="w-32 space-y-1">
+                      <Label htmlFor="occupancy-filter" className="text-xs">
+                        Status
+                      </Label>
+                      <Select
+                        id="occupancy-filter"
+                        name="occupancy"
+                        defaultValue={occupancyFilter}
+                        className="h-8 text-xs"
+                      >
+                        <option value="all">All</option>
+                        <option value="occupied">Occupied</option>
+                        <option value="empty">Vacant</option>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="area-min" className="text-xs">
+                        Area (m²)
+                      </Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          id="area-min"
+                          name="areaMin"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={areaMin ?? ""}
+                          placeholder="Min"
+                          className="h-8 w-20 text-xs"
+                        />
+                        <span className="text-xs text-muted-foreground">–</span>
+                        <Input
+                          id="area-max"
+                          name="areaMax"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={areaMax ?? ""}
+                          placeholder="Max"
+                          className="h-8 w-20 text-xs"
+                          aria-label="Maximum area in square metres"
+                        />
+                      </div>
+                    </div>
                     <div className="min-w-48 flex-1 max-w-xs space-y-1">
                       <Label htmlFor="unit-search" className="text-xs">
                         Search
@@ -1199,6 +1350,28 @@ export default async function PropertyDetailPage({
                     </ButtonLink>
                   )}
                 </div>
+                {hasActiveFilter && (
+                  <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                    Showing{" "}
+                    <span className="font-bold text-foreground">
+                      {displayedUnits.length}
+                    </span>{" "}
+                    of {property.units.length}{" "}
+                    {propertyType.unitNounPlural.toLowerCase()} ·{" "}
+                    <span className="font-bold text-foreground">
+                      {formatSqm(filteredSpace.totalSqm)}
+                    </span>{" "}
+                    total ·{" "}
+                    <span className="font-bold text-teal-700">
+                      {formatSqm(filteredSpace.occupiedSqm)}
+                    </span>{" "}
+                    occupied ·{" "}
+                    <span className="font-bold text-foreground">
+                      {formatSqm(filteredSpace.vacantSqm)}
+                    </span>{" "}
+                    vacant
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
@@ -1317,6 +1490,9 @@ export default async function PropertyDetailPage({
                               hasBedrooms && unit.bedrooms
                                 ? `${unit.bedrooms} bed`
                                 : null,
+                              areaValue(unit.areaSqm) !== null
+                                ? formatSqm(areaValue(unit.areaSqm)!)
+                                : null,
                             ]
                               .filter(Boolean)
                               .join(" · ")}
@@ -1353,7 +1529,7 @@ export default async function PropertyDetailPage({
                               <span>No service charge</span>
                             </>
                           )}
-                          {unit._count.requests > 0 && (
+                          {can("maintenance") && unit._count.requests > 0 && (
                             <>
                               <span className="text-border">·</span>
                               <span>
@@ -1473,13 +1649,15 @@ export default async function PropertyDetailPage({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="entitlements">Unit entitlement (m²)</Label>
+                      <Label htmlFor="gen-area">Area per unit (m²)</Label>
                       <Input
-                        id="entitlements"
-                        name="entitlements"
+                        id="gen-area"
+                        name="areaSqm"
                         type="number"
-                        min={0}
-                        placeholder="e.g. 70"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="e.g. 85.5"
+                        required
                       />
                     </div>
                   </div>
@@ -1578,15 +1756,17 @@ export default async function PropertyDetailPage({
                     </div>
                   )}
                   <div className="space-y-1.5">
-                    <Label htmlFor="add-unit-entitlements" className="text-xs">
-                      Unit entitlement (m²)
+                    <Label htmlFor="add-unit-area" className="text-xs">
+                      Area (m²)
                     </Label>
                     <Input
-                      id="add-unit-entitlements"
-                      name="entitlements"
+                      id="add-unit-area"
+                      name="areaSqm"
                       type="number"
-                      min={0}
-                      placeholder="e.g. 70"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="e.g. 85.5"
+                      required
                     />
                   </div>
                 </div>
@@ -1785,7 +1965,7 @@ export default async function PropertyDetailPage({
                   <p className="text-xs text-muted-foreground">
                     {takesServiceCharge
                       ? `Ownership and service charges are now set per unit — see each ${unitNoun}’s row above.`
-                      : `Ownership is set on the ${unitNoun} — this independent property does not take a service charge.`}
+                      : `Ownership is set on the ${unitNoun} — this property does not take a service charge.`}
                   </p>
                   <div className="space-y-2 rounded-md border p-2">
                     <p className="text-xs font-medium">
@@ -1918,7 +2098,7 @@ export default async function PropertyDetailPage({
                 </form>
               </details>
               )}
-              {!isPropertyBuildingType && (
+              {!isPropertyBuildingType && can("maintenance") && (
                 <ButtonLink
                   href={`/protected/maintenance?property=${property.id}`}
                   variant="outline"

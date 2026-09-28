@@ -11,8 +11,10 @@ import { formatMoney, moneyValue } from "@/lib/finance";
 import { formatUnitLabel } from "@/lib/property-types";
 import { prisma } from "@/lib/prisma";
 import { requireAnyRole, isStaffAdmin } from "@/lib/session";
+import { adminAccess } from "@/lib/permissions";
 import { UserType } from "@/lib/generated/prisma/client";
 import { ownerAtDate, personName } from "@/lib/unit-owner-at";
+import { areaValue, formatSqm } from "@/lib/unit-area";
 import { cn } from "@/lib/utils";
 
 type LedgerEntry = {
@@ -60,6 +62,7 @@ export default async function UnitLedgerPage({
 }) {
   const { id: propertyId, unitId } = await params;
   const user = await requireAnyRole(UserType.admin, UserType.owner);
+  const canDownloadPdf = (await adminAccess(user)).can("download_pdf");
   const isOwner = user.userType === UserType.owner;
   const isAdmin = isStaffAdmin(user.userType);
 
@@ -236,6 +239,7 @@ export default async function UnitLedgerPage({
           label: "Back to Unit Ledgers",
         }}
       >
+        {canDownloadPdf && (
         <ButtonLink
           href={`/api/units/${unit.id}/ledger-pdf`}
           target="_blank"
@@ -245,6 +249,7 @@ export default async function UnitLedgerPage({
           <Download className="h-4 w-4" />
           Download PDF
         </ButtonLink>
+        )}
       </PageHeader>
 
       <Card>
@@ -269,8 +274,10 @@ export default async function UnitLedgerPage({
             <p className="font-medium">{unitLabel}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Unit Entitlement</p>
-            <p className="font-medium">{unit.entitlements ?? "—"}</p>
+            <p className="text-xs text-muted-foreground">Unit Area</p>
+            <p className="font-medium">
+              {areaValue(unit.areaSqm) !== null ? formatSqm(areaValue(unit.areaSqm)!) : "—"}
+            </p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Service Charge Balance</p>

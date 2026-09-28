@@ -28,6 +28,10 @@ const HEARTBEAT_MS = 25_000;
 /** How soon the browser should come back after we hang up. */
 const RECONNECT_MS = 2_000;
 
+/** Longer wait when the database listener could not be reached, so a struggling
+ * pooler isn't hammered by every open tab reconnecting every two seconds. */
+const RECONNECT_AFTER_FAILURE_MS = 15_000;
+
 /** An event reaches you if it names your role, or names you. */
 function isForUser(event: AppEvent, user: SessionUser): boolean {
   return Boolean(
@@ -64,11 +68,28 @@ export async function GET(request: NextRequest) {
       send(`retry: ${RECONNECT_MS}\n\n`);
       send(": connected\n\n");
 
-      const unsubscribe = await subscribe((event) => {
-        if (isForUser(event, user)) {
-          send(`data: ${JSON.stringify({ kind: event.kind })}\n\n`);
+      let unsubscribe: () => void;
+
+      try {
+        unsubscribe = await subscribe((event) => {
+          if (isForUser(event, user)) {
+            send(`data: ${JSON.stringify({ kind: event.kind })}\n\n`);
+          }
+        });
+      } catch (error) {
+        // Live updates are a nicety; the page works without them. End the
+        // stream cleanly and tell the browser to come back later rather than
+        // answering 500 — EventSource treats that as a hard failure.
+        console.error("Realtime unavailable, will retry:", (error as Error).message);
+        send(`retry: ${RECONNECT_AFTER_FAILURE_MS}\n\n`);
+        open = false;
+        try {
+          controller.close();
+        } catch {
+          // Already closed.
         }
-      });
+        return;
+      }
 
       const heartbeat = setInterval(() => send(": ping\n\n"), HEARTBEAT_MS);
 

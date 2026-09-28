@@ -1,6 +1,9 @@
 import {
   Briefcase,
   Building2,
+  ChevronLeft,
+  ChevronRight,
+  KeyRound,
   DoorOpen,
   Home,
   Landmark,
@@ -25,8 +28,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { formatOmanAddress } from "@/lib/oman";
+import { computeSpaceStats, formatSqm } from "@/lib/unit-area";
 import { prisma } from "@/lib/prisma";
+import { personVisibilityWhere, visiblePersonCategories } from "@/lib/permissions";
 import { requireAnyRole, isStaffAdmin } from "@/lib/session";
+import { adminAccess } from "@/lib/permissions";
 import { UserType } from "@/lib/generated/prisma/client";
 import { PageProps } from "@/types/page";
 import {
@@ -39,17 +45,34 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
     owner?: string;
     q?: string;
     type?: string;
+    newOwner?: string;
+    page?: string;
   };
   const message = params as unknown as Message;
   const user = await requireAnyRole(UserType.admin, UserType.owner);
   const isOwner = user.userType === UserType.owner;
   const isAdmin = isStaffAdmin(user.userType);
+  const ownerPersonWhere = personVisibilityWhere(await visiblePersonCategories(user));
   const ownerFilter =
     isAdmin && typeof params.owner === "string" ? params.owner : "all";
   const search =
     isAdmin && typeof params.q === "string" ? params.q.trim() : "";
   const typeFilter =
     isAdmin && typeof params.type === "string" ? params.type : "all";
+  // Arriving from an owner's card ("Add another property") — the new
+  // property is created already linked to that owner.
+  const newOwnerParam = isAdmin ? params.newOwner : undefined;
+  const newOwnerRow =
+    typeof newOwnerParam === "string"
+      ? await prisma.user.findFirst({
+          where: { id: newOwnerParam, userType: UserType.owner },
+          select: { id: true, email: true, firstName: true, lastName: true },
+        })
+      : null;
+  const newOwnerName = newOwnerRow
+    ? [newOwnerRow.firstName, newOwnerRow.lastName].filter(Boolean).join(" ") ||
+      newOwnerRow.email
+    : undefined;
 
   // Shared by both the main list query and the "by management type" cards
   // below — the cards themselves always reflect every type (so they all
@@ -85,20 +108,33 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
           : {}),
       };
 
+  const PAGE_SIZE = 25;
+  const listWhere = {
+    ...baseWhere,
+    ...(typeFilter !== "all" ? { propertyTypeId: typeFilter } : {}),
+  };
+  const totalProperties = await prisma.property.count({ where: listWhere });
+  const totalPages = Math.max(1, Math.ceil(totalProperties / PAGE_SIZE));
+  const requestedPage = Number(typeof params.page === "string" ? params.page : "1");
+  const currentPage = Math.min(
+    totalPages,
+    Math.max(1, Number.isFinite(requestedPage) ? Math.floor(requestedPage) : 1),
+  );
+
   const [properties, propertyTypeCounts, propertyTypes, pendingProperties, owners] =
     await Promise.all([
       prisma.property.findMany({
-        where: {
-          ...baseWhere,
-          ...(typeFilter !== "all" ? { propertyTypeId: typeFilter } : {}),
-        },
+        where: listWhere,
         orderBy: { createdAt: "desc" },
+        skip: (currentPage - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
         include: {
           propertyType: true,
           _count: { select: { units: true } },
           units: {
             select: {
               tenantId: true,
+              areaSqm: true,
               owner: { select: { email: true, firstName: true, lastName: true } },
             },
           },
@@ -128,7 +164,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
         : Promise.resolve([]),
       isAdmin
         ? prisma.user.findMany({
-            where: { userType: UserType.owner },
+            where: { AND: [{ userType: UserType.owner }, ownerPersonWhere] },
             select: { id: true, email: true, firstName: true, lastName: true },
             orderBy: { email: "asc" },
           })
@@ -156,6 +192,16 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
     icon: Home,
     iconBg: "bg-teal-50 text-teal-600",
     accent: "bg-teal-500",
+  };
+
+  const pageHref = (page: number) => {
+    const query = new URLSearchParams();
+    if (ownerFilter !== "all") query.set("owner", ownerFilter);
+    if (search) query.set("q", search);
+    if (typeFilter !== "all") query.set("type", typeFilter);
+    if (page > 1) query.set("page", String(page));
+    const qs = query.toString();
+    return `/protected/properties${qs ? `?${qs}` : ""}`;
   };
 
   const buildTypeHref = (typeId: string) => {
@@ -203,7 +249,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
       >
         {isAdmin && (
           <>
-            <OwnerReportModal owners={owners} />
+            {(await adminAccess(user)).can("prop_owner_report") && <OwnerReportModal owners={owners} />}
             <ButtonLink href="/protected/admin/property-types" variant="outline">
               <Settings className="h-4 w-4" />
               Property types
@@ -457,7 +503,13 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
       )}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_27rem]">
-        <div className="min-w-0 space-y-4">
+        {/* The list column takes the height of the "Add a property" card next
+         * to it: the wrapper reserves no height of its own, its content is
+         * laid over the grid cell, and the scroll area fills what's left
+         * above the pager — so the scroll bar is exactly as tall as the
+         * form beside it. */}
+        <div className="min-w-0 lg:relative lg:min-h-[34rem]">
+          <div className="flex flex-col gap-3 lg:absolute lg:inset-0">
           {properties.length === 0 ? (
             <EmptyState
               icon={Building2}
@@ -465,8 +517,10 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
               description="Add your first Oman property using the form, then add its units."
             />
           ) : (
-            properties.map((property) => {
+            <div className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+            {properties.map((property) => {
               const occupied = property.units.filter((u) => u.tenantId).length;
+              const space = computeSpaceStats(property.units);
               const total = property._count.units;
               const pct = total > 0 ? Math.round((occupied / total) * 100) : 0;
               const occupancyTone =
@@ -491,93 +545,184 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
                   href={`/protected/properties/${property.id}`}
                   className="block"
                 >
-                  <Card className="overflow-hidden border-border/60 shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#0886be]/30 hover:shadow-md">
-                    <CardContent className="space-y-4 p-5">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex items-start gap-4">
-                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#0886be]/10 text-[#0886be] ring-1 ring-inset ring-[#0886be]/15">
-                            <Building2 className="h-5 w-5" />
-                          </span>
-                          <div className="space-y-1.5">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="font-semibold tracking-tight">
-                                {property.name}
-                              </h3>
-                              <span className="inline-flex items-center rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/15">
-                                {property.propertyType.label}
-                              </span>
-                              {!property.approved &&
-                                (property.submittedAt ? (
-                                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
-                                    Pending approval
-                                  </span>
-                                ) : property.rejectedAt ? (
-                                  <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800 ring-1 ring-inset ring-rose-200">
-                                    Rejected
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
-                                    Draft
-                                  </span>
-                                ))}
-                            </div>
-                            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                              <MapPin className="h-3.5 w-3.5 shrink-0" />
-                              {formatOmanAddress(property)}
-                            </p>
-                            {isAdmin && (
-                              <p className="text-sm text-muted-foreground">
-                                {distinctOwnerEmails(property.units).length > 0
-                                  ? `Owner${
-                                      distinctOwnerEmails(property.units)
-                                        .length > 1
-                                        ? "s"
-                                        : ""
-                                    }: ${distinctOwnerEmails(
-                                      property.units,
-                                    ).join(", ")}`
-                                  : "No owner assigned"}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-5 sm:gap-6">
-                          <Stat
-                            icon={<DoorOpen className="h-4 w-4" />}
-                            value={total}
-                            label={property.propertyType.unitNounPlural.toLowerCase()}
-                          />
-                          <div className="h-8 w-px bg-border/60" />
-                          <div className="text-right">
-                            <div className="flex items-center justify-end gap-1.5 font-semibold">
-                              <Users className="h-4 w-4 text-muted-foreground" />
-                              {occupied}
-                            </div>
-                            <span
-                              className={`mt-0.5 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${occupancyTone.pill}`}
-                            >
-                              {pct}% occupied
+                  <article className="group/card overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:border-teal-300 hover:shadow-md">
+                    <div className="flex flex-col gap-4 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+                      <div className="flex min-w-0 flex-1 items-center gap-3.5">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white shadow-sm">
+                          <Building2 className="h-5 w-5" />
+                        </span>
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <h3 className="truncate text-base font-semibold tracking-tight text-slate-900 group-hover/card:text-teal-700">
+                              {property.name}
+                            </h3>
+                            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/20">
+                              {property.propertyType.label}
                             </span>
+                            {!property.approved &&
+                              (property.submittedAt ? (
+                                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-300">
+                                  Pending approval
+                                </span>
+                              ) : property.rejectedAt ? (
+                                <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800 ring-1 ring-inset ring-rose-300">
+                                  Rejected
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-inset ring-slate-300">
+                                  Draft
+                                </span>
+                              ))}
                           </div>
+                          <p className="flex items-start gap-1.5 text-xs text-slate-500">
+                            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span className="line-clamp-2" title={formatOmanAddress(property)}>
+                              {formatOmanAddress(property)}
+                            </span>
+                          </p>
+                          {isAdmin && (
+                            <p className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+                              <KeyRound className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                              <span className="truncate">
+                                {distinctOwnerEmails(property.units).length > 0
+                                  ? distinctOwnerEmails(property.units).join(", ")
+                                  : "No owner assigned"}
+                              </span>
+                            </p>
+                          )}
                         </div>
                       </div>
 
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className={`h-full rounded-full ${occupancyTone.bar}`}
-                          style={{ width: `${pct}%` }}
-                        />
+
+                        <div className="flex shrink-0 items-center gap-3 sm:pt-1">
+                          <div className="w-36">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-medium text-slate-500">Occupancy</span>
+                              <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${occupancyTone.pill}`}>
+                                {pct}%
+                              </span>
+                            </div>
+                            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                              <div className={`h-full rounded-full ${occupancyTone.bar}`} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                          <ChevronRight className="hidden h-5 w-5 shrink-0 text-slate-400 transition-colors group-hover/card:text-teal-600 sm:block" />
+                        </div>
                       </div>
-                    </CardContent>
-                  </Card>
+
+                      <dl
+                        className="flex flex-wrap gap-px overflow-hidden rounded-lg border border-slate-100 bg-slate-100"
+                      >
+                        <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                          <dt className="text-[11px] font-medium text-slate-500">
+                            {property.propertyType.unitNounPlural}
+                          </dt>
+                          <dd className="text-base font-semibold tabular-nums text-slate-900">{total}</dd>
+                        </div>
+                        <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                          <dt className="text-[11px] font-medium text-slate-500">Occupied</dt>
+                          <dd className="text-base font-semibold tabular-nums text-slate-900">
+                            {occupied}
+                            <span className="text-xs font-medium text-slate-400"> / {total}</span>
+                          </dd>
+                        </div>
+                        {space.totalSqm > 0 && (
+                          <>
+                            <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                              <dt className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-slate-500">
+                                Occupied area
+                              </dt>
+                              <dd className="text-base font-semibold tabular-nums text-slate-900">
+                                {formatSqm(space.occupiedSqm)}
+                              </dd>
+                            </div>
+                            <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                              <dt className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-slate-500">
+                                Vacant area
+                              </dt>
+                              <dd className="text-base font-semibold tabular-nums text-slate-900">
+                                {formatSqm(space.vacantSqm)}
+                              </dd>
+                            </div>
+                          </>
+                        )}
+                      </dl>
+                    </div>
+                  </article>
                 </Link>
               );
-            })
+            })}
+            </div>
           )}
+
+          {totalProperties > PAGE_SIZE && (
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
+              <p className="text-xs text-muted-foreground">
+                Showing {(currentPage - 1) * PAGE_SIZE + 1}–
+                {Math.min(currentPage * PAGE_SIZE, totalProperties)} of {totalProperties}
+              </p>
+              <nav className="flex items-center gap-1" aria-label="Pagination">
+                {currentPage > 1 ? (
+                  <Link
+                    href={pageHref(currentPage - 1)}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border bg-background px-2.5 text-xs font-medium hover:bg-muted"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Prev
+                  </Link>
+                ) : (
+                  <span className="inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs text-muted-foreground/50">
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Prev
+                  </span>
+                )}
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter(
+                    (page) =>
+                      page === 1 ||
+                      page === totalPages ||
+                      Math.abs(page - currentPage) <= 1,
+                  )
+                  .map((page, index, pages) => (
+                    <span key={page} className="flex items-center gap-1">
+                      {index > 0 && page - pages[index - 1] > 1 && (
+                        <span className="px-1 text-xs text-muted-foreground">…</span>
+                      )}
+                      <Link
+                        href={pageHref(page)}
+                        aria-current={page === currentPage ? "page" : undefined}
+                        className={
+                          page === currentPage
+                            ? "inline-flex h-8 min-w-8 items-center justify-center rounded-lg bg-primary px-2 text-xs font-semibold text-primary-foreground"
+                            : "inline-flex h-8 min-w-8 items-center justify-center rounded-lg border bg-background px-2 text-xs font-medium hover:bg-muted"
+                        }
+                      >
+                        {page}
+                      </Link>
+                    </span>
+                  ))}
+                {currentPage < totalPages ? (
+                  <Link
+                    href={pageHref(currentPage + 1)}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border bg-background px-2.5 text-xs font-medium hover:bg-muted"
+                  >
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Link>
+                ) : (
+                  <span className="inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs text-muted-foreground/50">
+                    Next
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </nav>
+            </div>
+          )}
+          </div>
         </div>
 
-        <Card className="h-fit overflow-hidden border-border/60 shadow-sm lg:sticky lg:top-24">
+        <Card className="h-fit overflow-hidden border-border/60 shadow-sm">
           <div className="flex items-center gap-3 bg-gradient-to-r from-teal-600 to-cyan-600 px-5 py-3.5">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white">
               <Plus className="h-4 w-4" />
@@ -588,6 +733,8 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
           </div>
           <CardContent className="pt-5">
             <CreatePropertyForm
+              defaultOwnerId={newOwnerRow?.id}
+              defaultOwnerName={newOwnerName}
               propertyTypes={propertyTypes}
               isOwner={isOwner}
               isAdmin={isAdmin}

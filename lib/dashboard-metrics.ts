@@ -11,6 +11,7 @@ import {
 import { formatUnitLabel } from "@/lib/property-types";
 import { prisma } from "@/lib/prisma";
 import { serviceChargeTone } from "@/lib/service-charge-status";
+import { areaValue, computeSpaceStats, type SpaceStats } from "@/lib/unit-area";
 import {
   ChargeStatus,
   PaymentStatus,
@@ -32,6 +33,16 @@ export type AdminDashboardMetrics = {
   unitCount: number;
   occupiedCount: number;
   vacantCount: number;
+  /** Occupied / vacant floor area in m², across every unit with an area. */
+  space: SpaceStats;
+  /** The biggest empty units by area — what could be let next. */
+  vacantUnits: {
+    id: string;
+    label: string;
+    areaSqm: number;
+    propertyId: string;
+    propertyName: string;
+  }[];
   workerCount: number;
   propertyCount: number;
   activeTenancies: number;
@@ -58,6 +69,7 @@ export type AdminDashboardMetrics = {
     name: string;
     occupied: number;
     units: number;
+    space: SpaceStats;
     openRequests: number;
   }[];
   recentRequests: {
@@ -146,7 +158,10 @@ export async function getAdminDashboardMetrics(): Promise<AdminDashboardMetrics>
         _count: { select: { units: true } },
         units: {
           select: {
+            id: true,
+            label: true,
             tenantId: true,
+            areaSqm: true,
             requests: {
               where: { status: { not: RequestStatus.completed } },
               select: { id: true },
@@ -318,6 +333,21 @@ export async function getAdminDashboardMetrics(): Promise<AdminDashboardMetrics>
     unitCount,
     occupiedCount,
     vacantCount: Math.max(0, unitCount - occupiedCount),
+    space: computeSpaceStats(properties.flatMap((property) => property.units)),
+    vacantUnits: properties
+      .flatMap((property) =>
+        property.units
+          .filter((unit) => !unit.tenantId && areaValue(unit.areaSqm) !== null)
+          .map((unit) => ({
+            id: unit.id,
+            label: unit.label,
+            areaSqm: areaValue(unit.areaSqm)!,
+            propertyId: property.id,
+            propertyName: property.name,
+          })),
+      )
+      .sort((a, b) => b.areaSqm - a.areaSqm)
+      .slice(0, 6),
     workerCount,
     propertyCount: properties.length,
     activeTenancies,
@@ -347,6 +377,7 @@ export async function getAdminDashboardMetrics(): Promise<AdminDashboardMetrics>
       name: property.name,
       occupied: property.units.filter((unit) => unit.tenantId).length,
       units: property._count.units,
+      space: computeSpaceStats(property.units),
       openRequests: property.units.reduce(
         (sum, unit) => sum + unit.requests.length,
         0,

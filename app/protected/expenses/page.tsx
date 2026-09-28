@@ -40,14 +40,16 @@ import {
   getExpenseCategoriesWithSubcategories,
 } from "@/lib/expenses";
 import { dateInputValue, formatMoney, moneyValue } from "@/lib/finance";
-import { formatUnitLabel } from "@/lib/property-types";
+import { collectsServiceCharge, formatUnitLabel } from "@/lib/property-types";
 import { prisma } from "@/lib/prisma";
+import { adminAccess } from "@/lib/permissions";
 import { requireRole } from "@/lib/session";
 import { UserType } from "@/lib/generated/prisma/client";
 import { PageProps } from "@/types/page";
 
 export default async function ExpensesPage({ searchParams }: PageProps) {
-  await requireRole(UserType.admin);
+  const admin = await requireRole(UserType.admin);
+  const { can } = await adminAccess(admin);
 
   const rawParams = (await searchParams) as unknown as {
     tab?: string;
@@ -140,7 +142,16 @@ export default async function ExpensesPage({ searchParams }: PageProps) {
       select: {
         id: true,
         name: true,
-        propertyType: { select: { name: true, isOwnerAssociation: true } },
+        propertyType: {
+          select: {
+            name: true,
+            isOwnerAssociation: true,
+            isBuildingManagement: true,
+            showRentBills: true,
+            showMaintenance: true,
+            hasCommonAreas: true,
+          },
+        },
       },
     }),
     prisma.unit.findMany({
@@ -203,6 +214,13 @@ export default async function ExpensesPage({ searchParams }: PageProps) {
   const exportCsvHref = `/api/expenses/export${exportQs}`;
   const exportPdfHref = `/api/expenses/export-pdf${exportQs}`;
 
+  const noServiceChargeById = new Map(
+    properties.map((property) => [
+      property.id,
+      !collectsServiceCharge(property.propertyType),
+    ]),
+  );
+
   return (
     <div className="w-full space-y-5 px-4 pt-4 pb-8 sm:px-6 lg:px-8">
       <PageHeader
@@ -216,7 +234,12 @@ export default async function ExpensesPage({ searchParams }: PageProps) {
         <div className="flex flex-wrap items-center gap-2">
           {tab === "log" ? (
             <>
-              <ExpensesExportMenu csvHref={exportCsvHref} pdfHref={exportPdfHref} />
+              <ExpensesExportMenu
+                csvHref={exportCsvHref}
+                pdfHref={exportPdfHref}
+                canDownloadPdf={can("download_pdf")}
+                canDownloadExcel={can("download_excel")}
+              />
               <CashFlowStatementModal
                 properties={properties}
                 defaultPropertyId={
@@ -585,7 +608,7 @@ export default async function ExpensesPage({ searchParams }: PageProps) {
                         >
                           <div className="min-w-0 space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-inset ring-violet-600/20">
+                              <span className="inline-flex items-center rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/20">
                                 {expense.category.label}
                               </span>
                               {expense.subcategory && (
@@ -685,6 +708,11 @@ export default async function ExpensesPage({ searchParams }: PageProps) {
                               suppliers={suppliers}
                               targetLabel={targetLabel}
                               isOaExpense={isOaExpense}
+                              noServiceCharge={
+                                expensePropertyId
+                                  ? noServiceChargeById.get(expensePropertyId) ?? false
+                                  : false
+                              }
                             />
                             <form>
                               <input type="hidden" name="expenseId" value={expense.id} />
@@ -714,7 +742,14 @@ export default async function ExpensesPage({ searchParams }: PageProps) {
                 </CardHeader>
                 <CardContent className="overflow-y-auto">
                   <LogExpenseForm
-                    properties={properties}
+                    properties={properties.map((property) => ({
+                      ...property,
+                      propertyType: {
+                        name: property.propertyType.name,
+                        isOwnerAssociation: property.propertyType.isOwnerAssociation,
+                        noServiceCharge: !collectsServiceCharge(property.propertyType),
+                      },
+                    }))}
                     units={unitOptions}
                     categories={categories}
                     suppliers={suppliers}

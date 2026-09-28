@@ -101,6 +101,10 @@ export async function sendWhatsApp(input: {
    * message still arrives when the recipient has not messaged us in 24h.
    * Leave unset for in-session bot replies. */
   preferTemplate?: boolean;
+  /** Body for the generic template if a free-form send is refused (outside
+   * the 24h window) — templates can't carry line breaks, so this is the
+   * flattened one-liner while `body` may be a multi-line message. */
+  fallbackBody?: string;
 }): Promise<void> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -151,7 +155,7 @@ export async function sendWhatsApp(input: {
         await sendWhatsAppTemplate({
           to: input.to,
           templateName: genericTemplate,
-          bodyParams: [input.body],
+          bodyParams: [input.fallbackBody ?? input.body],
         });
         return;
       }
@@ -205,12 +209,218 @@ function templateLanguages(preferred?: string): string[] {
   return [...new Set([preferred, configured, "en_US", "en"].filter(Boolean) as string[])];
 }
 
+/** Pieces of one alert, kept apart so each can go on its own line. */
+export type WhatsAppAlertParts = {
+  title: string;
+  message: string;
+  details: { label: string; value: string }[];
+  closing?: string;
+  /** "Dear Ahmed," — the message is addressed to the person by name. */
+  greeting?: string;
+};
+
+/** A properly laid-out chat message — bold title, blank lines between the
+ * blocks, one detail per line. Real line breaks only survive in free-form
+ * text (Meta strips them from template variables), so this is what's sent
+ * inside an open 24-hour window and what the structured template mirrors. */
+export function formatWhatsAppText(parts: WhatsAppAlertParts): string {
+  const details = parts.details
+    .filter((d) => d.value.trim().length > 0)
+    .map((d) => `▪️ ${d.label}: *${d.value.trim()}*`);
+  return [
+    `*${parts.title}*`,
+    parts.greeting ? `${parts.greeting},` : "",
+    parts.message,
+    details.length ? details.join("\n") : "",
+    parts.closing ? `_${parts.closing}_` : "",
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
+}
+
+/**
+ * Sends one account alert with the best layout the channel allows:
+ *
+ *  1. WHATSAPP_TEMPLATE_STRUCTURED set → a multi-variable approved template
+ *     whose BODY holds the line breaks and spacing (only the template text
+ *     itself may contain newlines, so each variable is one short line):
+ *
+ *       Shumookh account notification
+ *
+ *       {{1}}          <- title
+ *
+ *       {{2}}          <- message
+ *
+ *       {{3}}          <- details, one line
+ *
+ *       {{4}}          <- closing note
+ *
+ *       This message relates to your existing tenancy, maintenance request,
+ *       or property account.
+ *
+ *  2. Otherwise the original single-variable generic template with the flat
+ *     one-line body (unchanged behaviour).
+ */
+export async function sendWhatsAppAlert(input: {
+  to: string;
+  parts: WhatsAppAlertParts;
+  /** The flat one-line body, used by the generic single-variable template. */
+  flatBody: string;
+  /** True while the recipient's 24-hour window is open (they messaged us
+   * recently): the alert then goes as a properly laid-out multi-line
+   * message. Otherwise it must go as an approved template, which Meta
+   * delivers regardless. (Meta accepts free-form text outside the window
+   * with a 200 and then never delivers it, so we must not guess.) */
+  windowOpen?: boolean;
+}): Promise<void> {
+  // Free-form text is only used when explicitly switched on
+  // (WHATSAPP_FREEFORM_FIRST=1). Meta accepts it with a success reply even
+  // when the recipient's 24-hour window has closed and then never delivers
+  // it, so an alert must not depend on our estimate of that window. Approved
+  // templates always arrive, so they are the default for every alert.
+  if (input.windowOpen && process.env.WHATSAPP_FREEFORM_FIRST === "1") {
+    await sendWhatsApp({
+      to: input.to,
+      body: formatWhatsAppText(input.parts),
+      fallbackBody: input.flatBody,
+    });
+    return;
+  }
+
+  // Approved templates laid out line by line — one detail per line, with the
+  // line breaks written into the template's own text (the only place Meta
+  // allows them). One template per number of detail lines, named
+  // `${WHATSAPP_TEMPLATE_ALERT_PREFIX}2` ... `6`. If Meta refuses it (not
+  // approved yet, edited, ...) we carry on to the one-line templates below.
+  const alertPrefix = process.env.WHATSAPP_TEMPLATE_ALERT_PREFIX;
+  if (alertPrefix && process.env.WHATSAPP_ACCESS_TOKEN) {
+    const lines = input.parts.details
+      .filter((d) => d.value.trim().length > 0)
+      .map((d) => `${d.label}: ${d.value.trim()}`);
+    if (lines.length >= 2) {
+      // More than six details: the surplus joins the last line.
+      const shown =
+        lines.length > 6 ? [...lines.slice(0, 5), lines.slice(5).join(" · ")] : lines;
+      const sent = await sendWhatsAppTemplate({
+        to: input.to,
+        templateName: `${alertPrefix}${shown.length}`,
+        bodyParams: [
+          input.parts.title,
+          input.parts.greeting
+            ? `${input.parts.greeting}, ${input.parts.message}`
+            : input.parts.message,
+          ...shown,
+          input.parts.closing || "Thank you.",
+        ],
+      });
+      if (sent) return;
+    }
+  }
+
+  const structured = process.env.WHATSAPP_TEMPLATE_STRUCTURED;
+  if (structured && process.env.WHATSAPP_ACCESS_TOKEN) {
+    const detailsLine = input.parts.details
+      .filter((d) => d.value.trim().length > 0)
+      .map((d) => `${d.label}: ${d.value.trim()}`)
+      .join(" | ");
+    await sendWhatsAppTemplate({
+      to: input.to,
+      templateName: structured,
+      bodyParams: [
+        input.parts.title,
+        input.parts.message,
+        detailsLine || "-",
+        input.parts.closing || "Thank you.",
+      ],
+    });
+    return;
+  }
+  await sendWhatsApp({ to: input.to, body: input.flatBody, preferTemplate: true });
+}
+
+/**
+ * Sends a file (e.g. an invoice PDF) as a WhatsApp document message —
+ * uploads it to Meta's media store, then sends it by media id. Documents are
+ * free-form messages, so Meta only delivers them inside the recipient's
+ * 24-hour window; outside it the request is refused and we just log it (the
+ * same PDF always goes by email, and the WhatsApp text carries the summary).
+ */
+export async function sendWhatsAppDocument(input: {
+  to: string;
+  filename: string;
+  /** Base64 file contents, same shape as an email attachment. */
+  contentBase64: string;
+  caption?: string;
+}): Promise<void> {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) return;
+
+  try {
+    const bytes = Buffer.from(input.contentBase64, "base64");
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", "application/pdf");
+    form.append(
+      "file",
+      new Blob([new Uint8Array(bytes)], { type: "application/pdf" }),
+      input.filename,
+    );
+
+    const upload = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: form,
+      },
+    );
+    if (!upload.ok) {
+      console.error(
+        `[whatsapp] Media upload failed (${upload.status}):`,
+        await upload.text().catch(() => ""),
+      );
+      return;
+    }
+    const { id } = (await upload.json()) as { id?: string };
+    if (!id) return;
+
+    const response = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: input.to.replace(/^\+/, ""),
+          type: "document",
+          document: {
+            id,
+            filename: input.filename,
+            ...(input.caption ? { caption: input.caption } : {}),
+          },
+        }),
+      },
+    );
+    if (!response.ok) {
+      console.warn(
+        `[whatsapp] Document to ${input.to} not delivered (${response.status}) — likely outside the 24h window; the PDF is in the email.`,
+      );
+    }
+  } catch (error) {
+    console.error(`[whatsapp] Failed to send document to ${input.to}:`, error);
+  }
+}
+
 export async function sendWhatsAppTemplate(input: {
   to: string;
   templateName: string;
   languageCode?: string;
   bodyParams?: string[];
-}): Promise<void> {
+}): Promise<boolean> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
@@ -219,7 +429,7 @@ export async function sendWhatsAppTemplate(input: {
       "[whatsapp] WhatsApp Cloud API env vars not set — skipping template message to",
       input.to,
     );
-    return;
+    return false;
   }
 
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -259,7 +469,7 @@ export async function sendWhatsAppTemplate(input: {
         }),
       });
 
-      if (response.ok) return;
+      if (response.ok) return true;
 
       const body = await response.text().catch(() => "");
       if (isMissingTemplateLanguage(body) && i < languages.length - 1) {
@@ -272,11 +482,12 @@ export async function sendWhatsAppTemplate(input: {
       console.error(
         `[whatsapp] Meta Cloud API template request failed (${response.status}) for ${input.to}: ${body}`,
       );
-      return;
+      return false;
     }
   } catch (error) {
     console.error(`[whatsapp] Failed to send template to ${input.to}:`, error);
   }
+  return false;
 }
 
 /**

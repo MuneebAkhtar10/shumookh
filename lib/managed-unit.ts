@@ -16,6 +16,7 @@ import type { ManagedUnit } from "@/components/unit-manage-modal";
  * rather than handing the raw query result straight to the "unit" prop. */
 type RawManagedUnit = Omit<
   ManagedUnit,
+  | "areaSqm"
   | "serviceChargeAmount"
   | "serviceChargeBalance"
   | "serviceChargeInvoices"
@@ -31,6 +32,7 @@ type RawManagedUnit = Omit<
    * can't cross into the client component), since a unit only ever has
    * one active tenancy at a time. */
   tenancies: Array<{ id: string; documents: DocumentItem[] }>;
+  areaSqm: unknown;
   serviceChargeAmount: unknown;
   serviceChargeBalance: unknown;
   serviceChargeInvoices: (Omit<
@@ -39,8 +41,12 @@ type RawManagedUnit = Omit<
   > & { amountPayable: unknown; currentAmount: unknown; previousBalance: unknown })[];
   serviceChargePayments?: (Omit<
     ManagedUnit["serviceChargePayments"][number],
-    "amount" | "originalAmount"
-  > & { amount: unknown; originalAmount?: unknown })[];
+    "amount" | "originalAmount" | "fromInstallment"
+  > & {
+    amount: unknown;
+    originalAmount?: unknown;
+    installment?: unknown;
+  })[];
   installmentPlans: (Omit<
     ManagedUnit["installmentPlans"][number],
     "installments"
@@ -68,6 +74,7 @@ export function toManagedUnit(unit: RawManagedUnit): ManagedUnit {
     activeTenancy: tenancies[0]
       ? { id: tenancies[0].id, documents: tenancies[0].documents }
       : null,
+    areaSqm: unit.areaSqm == null ? null : String(unit.areaSqm),
     serviceChargeAmount:
       unit.serviceChargeAmount == null ? null : String(unit.serviceChargeAmount),
     serviceChargeBalance: String(unit.serviceChargeBalance),
