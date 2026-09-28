@@ -11,6 +11,7 @@ import { ServiceChargeInvoiceDocument } from "@/lib/pdf/service-charge-invoice";
 import { ServicesInvoiceDocument } from "@/lib/pdf/services-invoice";
 import { prisma } from "@/lib/prisma";
 import { ownerAtDate, personName } from "@/lib/unit-owner-at";
+import { areaValue, formatSqm } from "@/lib/unit-area";
 import { isBuildingType } from "@/lib/property-types";
 
 const numberFormat = new Intl.NumberFormat("en-OM", {
@@ -150,7 +151,7 @@ function documentProps(
     issueDate: format(invoice.issueDate, "dd/MM/yy"),
     dueDate: format(dueDate, "dd/MM/yyyy"),
     unitNo,
-    entitlements: unit.entitlements != null ? String(unit.entitlements) : "-",
+    unitArea: areaValue(unit.areaSqm) !== null ? formatSqm(areaValue(unit.areaSqm)!) : "-",
     previousBalance: numberFormat.format(moneyValue(invoice.previousBalance)),
     currentAmount: numberFormat.format(
       overlay ? overlay.amount : moneyValue(invoice.currentAmount),

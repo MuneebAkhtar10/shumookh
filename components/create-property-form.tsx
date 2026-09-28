@@ -186,13 +186,15 @@ export function CreatePropertyForm({
               </div>
             ) : null}
             <div className="space-y-1.5">
-              <Label htmlFor="unitEntitlements">Entitlement (m²)</Label>
+              <Label htmlFor="unitAreaSqm">Area (m²)</Label>
               <Input
-                id="unitEntitlements"
-                name="unitEntitlements"
+                id="unitAreaSqm"
+                name="unitAreaSqm"
                 type="number"
-                min={0}
-                placeholder="e.g. 220"
+                min="0.01"
+                step="0.01"
+                placeholder="e.g. 85.5"
+                required
               />
             </div>
           </div>

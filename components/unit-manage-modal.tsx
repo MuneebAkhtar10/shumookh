@@ -78,6 +78,9 @@ export type ManagedUnit = {
   label: string;
   floor: number | null;
   bedrooms: number | null;
+  /** Rentable floor area in m², as a plain string (a Decimal can't cross
+   * into this client component). Null = not recorded. */
+  areaSqm: string | null;
   ownerId: string | null;
   tenantId: string | null;
   owner: {
@@ -108,7 +111,6 @@ export type ManagedUnit = {
   serviceChargeCycleMonths: number | null;
   serviceChargeDueDate: Date | null;
   serviceChargeLastReceivedAt: Date | null;
-  entitlements: number | null;
   serviceChargeBalance: string;
   serviceChargeInvoices: {
     id: string;
@@ -357,7 +359,7 @@ export function UnitManageModal({
   const status: Record<TabKey, TabStatus> = {
     details:
       unit.label.trim() !== "" &&
-      unit.entitlements != null &&
+      unit.areaSqm != null &&
       (!hasFloors || unit.floor != null) &&
       (!hasBedrooms || unit.bedrooms != null) &&
       Boolean(unit.owner)
@@ -528,16 +530,18 @@ export function UnitManageModal({
               </div>
             )}
             <div className="space-y-1">
-              <Label htmlFor={`u-entitlements-${unit.id}`} className="text-xs">
-                Unit entitlement (m²)
+              <Label htmlFor={`u-area-${unit.id}`} className="text-xs">
+                Area (m²)
               </Label>
               <Input
-                id={`u-entitlements-${unit.id}`}
-                name="entitlements"
+                id={`u-area-${unit.id}`}
+                name="areaSqm"
                 type="number"
-                min={0}
-                placeholder="e.g. 70"
-                defaultValue={unit.entitlements ?? ""}
+                min="0.01"
+                step="0.01"
+                placeholder="e.g. 85.5"
+                defaultValue={unit.areaSqm ?? ""}
+                required
               />
             </div>
             {isAdmin && !unit.owner && (

@@ -12,6 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser, isStaffAdmin } from "@/lib/session";
 import { UserType } from "@/lib/generated/prisma/client";
 import { ownerAtDate, personName } from "@/lib/unit-owner-at";
+import { areaValue, formatSqm } from "@/lib/unit-area";
 
 /** Admin, or the unit's own owner — same access rule as the ledger page
  * itself (app/protected/properties/[id]/units/[unitId]/ledger/page.tsx). */
@@ -173,7 +174,7 @@ export async function GET(
       associationName: unit.property.name,
       buildingNumber: unit.property.buildingNumber ?? "—",
       unitNo: unitLabel,
-      entitlements: unit.entitlements != null ? String(unit.entitlements) : "—",
+      area: areaValue(unit.areaSqm) !== null ? formatSqm(areaValue(unit.areaSqm)!) : "—",
       ownerName,
       totalBalance:
         totalBalance < 0

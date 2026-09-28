@@ -165,7 +165,7 @@ export function UnitLedgerStatementDocument({
   associationName,
   buildingNumber,
   unitNo,
-  entitlements,
+  area,
   ownerName,
   totalBalance,
   totalNegative,
@@ -175,7 +175,7 @@ export function UnitLedgerStatementDocument({
   associationName: string;
   buildingNumber: string;
   unitNo: string;
-  entitlements: string;
+  area: string;
   ownerName: string;
   totalBalance: string;
   totalNegative: boolean;
@@ -210,8 +210,8 @@ export function UnitLedgerStatementDocument({
             <Text style={styles.detailValue}>{unitNo}</Text>
           </View>
           <View style={styles.detailBox}>
-            <Text style={styles.detailLabel}>Unit Entitlement</Text>
-            <Text style={styles.detailValue}>{entitlements}</Text>
+            <Text style={styles.detailLabel}>Unit Area</Text>
+            <Text style={styles.detailValue}>{area}</Text>
           </View>
           <View style={[styles.detailBox, { borderRightWidth: 0 }]}>
             <Text style={styles.detailLabel}>Service Charge Balance</Text>

@@ -175,7 +175,7 @@ export function ServiceChargeInvoiceDocument({
   issueDate,
   dueDate,
   unitNo,
-  entitlements,
+  unitArea,
   previousBalance,
   currentAmount,
   amountPayable,
@@ -204,7 +204,7 @@ export function ServiceChargeInvoiceDocument({
   issueDate: string;
   dueDate: string;
   unitNo: string;
-  entitlements: string;
+  unitArea: string;
   previousBalance: string;
   currentAmount: string;
   amountPayable: string;
@@ -314,8 +314,8 @@ export function ServiceChargeInvoiceDocument({
               {unitNo}
             </Text>
             <Text>
-              <Text style={styles.metaLabel}>Unit Entitlements: </Text>
-              {entitlements}
+              <Text style={styles.metaLabel}>Unit Area: </Text>
+              {unitArea}
             </Text>
           </View>
           <View style={styles.unitInfoCol}>

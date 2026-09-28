@@ -57,7 +57,17 @@ async function ensureListening(): Promise<void> {
     // LISTEN needs a session that stays open on one backend connection.
     // Supabase's pooled DATABASE_URL runs through Supavisor in transaction
     // mode, which can't hold that — DIRECT_URL is the unpooled connection.
-    const client = new Client({ connectionString: process.env.DIRECT_URL });
+    //
+    // Without a connect timeout pg waits indefinitely on a stalled login
+    // (Supavisor's session pool can be briefly full, e.g. after dev-server
+    // restarts leave listener sessions behind) — which held every /api/events
+    // request open until the platform killed it. Fail fast instead and let the
+    // caller retry.
+    const client = new Client({
+      connectionString: process.env.DIRECT_URL,
+      connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+    });
 
     client.on("notification", (message) => {
       if (!message.payload) {
@@ -85,8 +95,14 @@ async function ensureListening(): Promise<void> {
       void client.end().catch(() => {});
     });
 
-    await client.connect();
-    await client.query(`LISTEN ${CHANNEL}`);
+    try {
+      await client.connect();
+      await client.query(`LISTEN ${CHANNEL}`);
+    } catch (error) {
+      // Don't strand a half-open session — that is what fills the pool.
+      void client.end().catch(() => {});
+      throw error;
+    }
 
     state.client = client;
   })();

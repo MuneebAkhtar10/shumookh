@@ -1,6 +1,15 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // There is another package-lock.json in the home folder, so Next was
+  // inferring /Users/mac as the workspace root and Turbopack ended up
+  // watching and scanning everything under it — pinning the dev server's CPU
+  // and starving the event loop (which then showed up as database
+  // EAUTHTIMEOUT errors). Pin the root to this project.
+  turbopack: {
+    root: path.resolve(process.cwd()),
+  },
   experimental: {
     serverActions: {
       /**

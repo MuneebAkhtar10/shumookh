@@ -352,7 +352,13 @@ export const AdminModule: {
   prop_unit_ledgers: 'prop_unit_ledgers',
   prop_service_charge: 'prop_service_charge',
   prop_collection_position: 'prop_collection_position',
-  prop_cash_flow: 'prop_cash_flow'
+  prop_cash_flow: 'prop_cash_flow',
+  see_workers_in_house: 'see_workers_in_house',
+  see_workers_third_party: 'see_workers_third_party',
+  see_owners: 'see_owners',
+  see_tenants: 'see_tenants',
+  download_pdf: 'download_pdf',
+  download_excel: 'download_excel'
 };
 
 export type AdminModule = (typeof AdminModule)[keyof typeof AdminModule]
@@ -9086,6 +9092,7 @@ export namespace Prisma {
   export type UnitAvgAggregateOutputType = {
     floor: number | null
     bedrooms: number | null
+    areaSqm: Decimal | null
     serviceChargeAmount: Decimal | null
     serviceChargeCycleMonths: number | null
     entitlements: number | null
@@ -9095,6 +9102,7 @@ export namespace Prisma {
   export type UnitSumAggregateOutputType = {
     floor: number | null
     bedrooms: number | null
+    areaSqm: Decimal | null
     serviceChargeAmount: Decimal | null
     serviceChargeCycleMonths: number | null
     entitlements: number | null
@@ -9107,6 +9115,7 @@ export namespace Prisma {
     label: string | null
     floor: number | null
     bedrooms: number | null
+    areaSqm: Decimal | null
     ownerId: string | null
     tenantId: string | null
     rentBillsEnabled: boolean | null
@@ -9129,6 +9138,7 @@ export namespace Prisma {
     label: string | null
     floor: number | null
     bedrooms: number | null
+    areaSqm: Decimal | null
     ownerId: string | null
     tenantId: string | null
     rentBillsEnabled: boolean | null
@@ -9151,6 +9161,7 @@ export namespace Prisma {
     label: number
     floor: number
     bedrooms: number
+    areaSqm: number
     ownerId: number
     tenantId: number
     rentBillsEnabled: number
@@ -9172,6 +9183,7 @@ export namespace Prisma {
   export type UnitAvgAggregateInputType = {
     floor?: true
     bedrooms?: true
+    areaSqm?: true
     serviceChargeAmount?: true
     serviceChargeCycleMonths?: true
     entitlements?: true
@@ -9181,6 +9193,7 @@ export namespace Prisma {
   export type UnitSumAggregateInputType = {
     floor?: true
     bedrooms?: true
+    areaSqm?: true
     serviceChargeAmount?: true
     serviceChargeCycleMonths?: true
     entitlements?: true
@@ -9193,6 +9206,7 @@ export namespace Prisma {
     label?: true
     floor?: true
     bedrooms?: true
+    areaSqm?: true
     ownerId?: true
     tenantId?: true
     rentBillsEnabled?: true
@@ -9215,6 +9229,7 @@ export namespace Prisma {
     label?: true
     floor?: true
     bedrooms?: true
+    areaSqm?: true
     ownerId?: true
     tenantId?: true
     rentBillsEnabled?: true
@@ -9237,6 +9252,7 @@ export namespace Prisma {
     label?: true
     floor?: true
     bedrooms?: true
+    areaSqm?: true
     ownerId?: true
     tenantId?: true
     rentBillsEnabled?: true
@@ -9346,6 +9362,7 @@ export namespace Prisma {
     label: string
     floor: number | null
     bedrooms: number | null
+    areaSqm: Decimal | null
     ownerId: string | null
     tenantId: string | null
     rentBillsEnabled: boolean
@@ -9387,6 +9404,7 @@ export namespace Prisma {
     label?: boolean
     floor?: boolean
     bedrooms?: boolean
+    areaSqm?: boolean
     ownerId?: boolean
     tenantId?: boolean
     rentBillsEnabled?: boolean
@@ -9425,6 +9443,7 @@ export namespace Prisma {
     label?: boolean
     floor?: boolean
     bedrooms?: boolean
+    areaSqm?: boolean
     ownerId?: boolean
     tenantId?: boolean
     rentBillsEnabled?: boolean
@@ -9450,6 +9469,7 @@ export namespace Prisma {
     label?: boolean
     floor?: boolean
     bedrooms?: boolean
+    areaSqm?: boolean
     ownerId?: boolean
     tenantId?: boolean
     rentBillsEnabled?: boolean
@@ -9475,6 +9495,7 @@ export namespace Prisma {
     label?: boolean
     floor?: boolean
     bedrooms?: boolean
+    areaSqm?: boolean
     ownerId?: boolean
     tenantId?: boolean
     rentBillsEnabled?: boolean
@@ -9491,7 +9512,7 @@ export namespace Prisma {
     updatedAt?: boolean
   }
 
-  export type UnitOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "propertyId" | "label" | "floor" | "bedrooms" | "ownerId" | "tenantId" | "rentBillsEnabled" | "maintenanceEnabled" | "serviceChargeAmount" | "serviceChargeCycleMonths" | "serviceChargeDueDate" | "serviceChargeLastStage" | "serviceChargeLastReceivedAt" | "serviceChargeLastReminderAt" | "entitlements" | "serviceChargeBalance" | "createdAt" | "updatedAt", ExtArgs["result"]["unit"]>
+  export type UnitOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "propertyId" | "label" | "floor" | "bedrooms" | "areaSqm" | "ownerId" | "tenantId" | "rentBillsEnabled" | "maintenanceEnabled" | "serviceChargeAmount" | "serviceChargeCycleMonths" | "serviceChargeDueDate" | "serviceChargeLastStage" | "serviceChargeLastReceivedAt" | "serviceChargeLastReminderAt" | "entitlements" | "serviceChargeBalance" | "createdAt" | "updatedAt", ExtArgs["result"]["unit"]>
   export type UnitInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     property?: boolean | PropertyDefaultArgs<ExtArgs>
     owner?: boolean | Unit$ownerArgs<ExtArgs>
@@ -9546,6 +9567,13 @@ export namespace Prisma {
       label: string
       floor: number | null
       bedrooms: number | null
+      /**
+       * Rentable floor area in square metres. Some units are let by the m² —
+       * this is what the occupied / vacant space reports add up. Null means
+       * "not recorded yet" and is left out of those totals (and counted
+       * separately so the gap is visible).
+       */
+      areaSqm: Prisma.Decimal | null
       /**
        * The landlord this unit belongs to. Null means no owner is assigned yet
        * (all units created before the owner role existed, and any an admin
@@ -10061,6 +10089,7 @@ export namespace Prisma {
     readonly label: FieldRef<"Unit", 'String'>
     readonly floor: FieldRef<"Unit", 'Int'>
     readonly bedrooms: FieldRef<"Unit", 'Int'>
+    readonly areaSqm: FieldRef<"Unit", 'Decimal'>
     readonly ownerId: FieldRef<"Unit", 'String'>
     readonly tenantId: FieldRef<"Unit", 'String'>
     readonly rentBillsEnabled: FieldRef<"Unit", 'Boolean'>
@@ -58918,6 +58947,7 @@ export namespace Prisma {
     label: 'label',
     floor: 'floor',
     bedrooms: 'bedrooms',
+    areaSqm: 'areaSqm',
     ownerId: 'ownerId',
     tenantId: 'tenantId',
     rentBillsEnabled: 'rentBillsEnabled',
@@ -60300,6 +60330,7 @@ export namespace Prisma {
     label?: StringFilter<"Unit"> | string
     floor?: IntNullableFilter<"Unit"> | number | null
     bedrooms?: IntNullableFilter<"Unit"> | number | null
+    areaSqm?: DecimalNullableFilter<"Unit"> | Decimal | DecimalJsLike | number | string | null
     ownerId?: UuidNullableFilter<"Unit"> | string | null
     tenantId?: UuidNullableFilter<"Unit"> | string | null
     rentBillsEnabled?: BoolFilter<"Unit"> | boolean
@@ -60337,6 +60368,7 @@ export namespace Prisma {
     label?: SortOrder
     floor?: SortOrderInput | SortOrder
     bedrooms?: SortOrderInput | SortOrder
+    areaSqm?: SortOrderInput | SortOrder
     ownerId?: SortOrderInput | SortOrder
     tenantId?: SortOrderInput | SortOrder
     rentBillsEnabled?: SortOrder
@@ -60379,6 +60411,7 @@ export namespace Prisma {
     label?: StringFilter<"Unit"> | string
     floor?: IntNullableFilter<"Unit"> | number | null
     bedrooms?: IntNullableFilter<"Unit"> | number | null
+    areaSqm?: DecimalNullableFilter<"Unit"> | Decimal | DecimalJsLike | number | string | null
     ownerId?: UuidNullableFilter<"Unit"> | string | null
     rentBillsEnabled?: BoolFilter<"Unit"> | boolean
     maintenanceEnabled?: BoolFilter<"Unit"> | boolean
@@ -60415,6 +60448,7 @@ export namespace Prisma {
     label?: SortOrder
     floor?: SortOrderInput | SortOrder
     bedrooms?: SortOrderInput | SortOrder
+    areaSqm?: SortOrderInput | SortOrder
     ownerId?: SortOrderInput | SortOrder
     tenantId?: SortOrderInput | SortOrder
     rentBillsEnabled?: SortOrder
@@ -60445,6 +60479,7 @@ export namespace Prisma {
     label?: StringWithAggregatesFilter<"Unit"> | string
     floor?: IntNullableWithAggregatesFilter<"Unit"> | number | null
     bedrooms?: IntNullableWithAggregatesFilter<"Unit"> | number | null
+    areaSqm?: DecimalNullableWithAggregatesFilter<"Unit"> | Decimal | DecimalJsLike | number | string | null
     ownerId?: UuidNullableWithAggregatesFilter<"Unit"> | string | null
     tenantId?: UuidNullableWithAggregatesFilter<"Unit"> | string | null
     rentBillsEnabled?: BoolWithAggregatesFilter<"Unit"> | boolean
@@ -64577,6 +64612,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -64612,6 +64648,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -64645,6 +64682,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -64680,6 +64718,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -64714,6 +64753,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -64735,6 +64775,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -64755,6 +64796,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -69366,6 +69408,7 @@ export namespace Prisma {
     label?: SortOrder
     floor?: SortOrder
     bedrooms?: SortOrder
+    areaSqm?: SortOrder
     ownerId?: SortOrder
     tenantId?: SortOrder
     rentBillsEnabled?: SortOrder
@@ -69385,6 +69428,7 @@ export namespace Prisma {
   export type UnitAvgOrderByAggregateInput = {
     floor?: SortOrder
     bedrooms?: SortOrder
+    areaSqm?: SortOrder
     serviceChargeAmount?: SortOrder
     serviceChargeCycleMonths?: SortOrder
     entitlements?: SortOrder
@@ -69397,6 +69441,7 @@ export namespace Prisma {
     label?: SortOrder
     floor?: SortOrder
     bedrooms?: SortOrder
+    areaSqm?: SortOrder
     ownerId?: SortOrder
     tenantId?: SortOrder
     rentBillsEnabled?: SortOrder
@@ -69419,6 +69464,7 @@ export namespace Prisma {
     label?: SortOrder
     floor?: SortOrder
     bedrooms?: SortOrder
+    areaSqm?: SortOrder
     ownerId?: SortOrder
     tenantId?: SortOrder
     rentBillsEnabled?: SortOrder
@@ -69438,6 +69484,7 @@ export namespace Prisma {
   export type UnitSumOrderByAggregateInput = {
     floor?: SortOrder
     bedrooms?: SortOrder
+    areaSqm?: SortOrder
     serviceChargeAmount?: SortOrder
     serviceChargeCycleMonths?: SortOrder
     entitlements?: SortOrder
@@ -78411,6 +78458,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -78444,6 +78492,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -78864,6 +78913,7 @@ export namespace Prisma {
     label?: StringFilter<"Unit"> | string
     floor?: IntNullableFilter<"Unit"> | number | null
     bedrooms?: IntNullableFilter<"Unit"> | number | null
+    areaSqm?: DecimalNullableFilter<"Unit"> | Decimal | DecimalJsLike | number | string | null
     ownerId?: UuidNullableFilter<"Unit"> | string | null
     tenantId?: UuidNullableFilter<"Unit"> | string | null
     rentBillsEnabled?: BoolFilter<"Unit"> | boolean
@@ -80838,6 +80888,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -80872,6 +80923,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -81079,6 +81131,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -81113,6 +81166,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -81310,6 +81364,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -81344,6 +81399,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -81869,6 +81925,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -81903,6 +81960,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -82430,6 +82488,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -82464,6 +82523,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
@@ -83801,6 +83861,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -83835,6 +83896,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
@@ -84266,6 +84328,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -84300,6 +84363,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -85796,6 +85860,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -85830,6 +85895,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -86171,6 +86237,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -86205,6 +86272,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -86537,6 +86605,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -86571,6 +86640,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -87091,6 +87161,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -87125,6 +87196,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -87615,6 +87687,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -87649,6 +87722,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -88174,6 +88248,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -88208,6 +88283,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -90873,6 +90949,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -90907,6 +90984,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -91016,6 +91094,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -91050,6 +91129,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -91451,6 +91531,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -91485,6 +91566,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -91562,6 +91644,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -91596,6 +91679,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -91663,6 +91747,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -91697,6 +91782,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -92216,6 +92302,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -92250,6 +92337,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -92875,6 +92963,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -92909,6 +92998,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -93490,6 +93580,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -93524,6 +93615,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -94119,6 +94211,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -94153,6 +94246,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -94447,6 +94541,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -94481,6 +94576,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -97795,6 +97891,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -97829,6 +97926,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -98613,6 +98711,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -98647,6 +98746,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -102217,6 +102317,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
     serviceChargeAmount?: Decimal | DecimalJsLike | number | string | null
@@ -102251,6 +102352,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -102640,6 +102742,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -102674,6 +102777,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -103971,6 +104075,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     ownerId?: string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
@@ -104102,6 +104207,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -104135,6 +104241,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -104168,6 +104275,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     ownerId?: NullableStringFieldUpdateOperationsInput | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -105784,6 +105892,7 @@ export namespace Prisma {
     label: string
     floor?: number | null
     bedrooms?: number | null
+    areaSqm?: Decimal | DecimalJsLike | number | string | null
     tenantId?: string | null
     rentBillsEnabled?: boolean
     maintenanceEnabled?: boolean
@@ -107455,6 +107564,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
     serviceChargeAmount?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
@@ -107489,6 +107599,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean
@@ -107522,6 +107633,7 @@ export namespace Prisma {
     label?: StringFieldUpdateOperationsInput | string
     floor?: NullableIntFieldUpdateOperationsInput | number | null
     bedrooms?: NullableIntFieldUpdateOperationsInput | number | null
+    areaSqm?: NullableDecimalFieldUpdateOperationsInput | Decimal | DecimalJsLike | number | string | null
     tenantId?: NullableStringFieldUpdateOperationsInput | string | null
     rentBillsEnabled?: BoolFieldUpdateOperationsInput | boolean
     maintenanceEnabled?: BoolFieldUpdateOperationsInput | boolean

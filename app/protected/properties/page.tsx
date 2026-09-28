@@ -28,7 +28,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { formatOmanAddress } from "@/lib/oman";
+import { computeSpaceStats, formatSqm } from "@/lib/unit-area";
 import { prisma } from "@/lib/prisma";
+import { personVisibilityWhere, visiblePersonCategories } from "@/lib/permissions";
 import { requireAnyRole, isStaffAdmin } from "@/lib/session";
 import { adminAccess } from "@/lib/permissions";
 import { UserType } from "@/lib/generated/prisma/client";
@@ -50,6 +52,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
   const user = await requireAnyRole(UserType.admin, UserType.owner);
   const isOwner = user.userType === UserType.owner;
   const isAdmin = isStaffAdmin(user.userType);
+  const ownerPersonWhere = personVisibilityWhere(await visiblePersonCategories(user));
   const ownerFilter =
     isAdmin && typeof params.owner === "string" ? params.owner : "all";
   const search =
@@ -131,6 +134,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
           units: {
             select: {
               tenantId: true,
+              areaSqm: true,
               owner: { select: { email: true, firstName: true, lastName: true } },
             },
           },
@@ -160,7 +164,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
         : Promise.resolve([]),
       isAdmin
         ? prisma.user.findMany({
-            where: { userType: UserType.owner },
+            where: { AND: [{ userType: UserType.owner }, ownerPersonWhere] },
             select: { id: true, email: true, firstName: true, lastName: true },
             orderBy: { email: "asc" },
           })
@@ -516,6 +520,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
             <div className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
             {properties.map((property) => {
               const occupied = property.units.filter((u) => u.tenantId).length;
+              const space = computeSpaceStats(property.units);
               const total = property._count.units;
               const pct = total > 0 ? Math.round((occupied / total) * 100) : 0;
               const occupancyTone =
@@ -541,7 +546,8 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
                   className="block"
                 >
                   <article className="group/card overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:border-teal-300 hover:shadow-md">
-                    <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
+                    <div className="flex flex-col gap-4 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
                       <div className="flex min-w-0 flex-1 items-center gap-3.5">
                         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white shadow-sm">
                           <Building2 className="h-5 w-5" />
@@ -551,7 +557,7 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
                             <h3 className="truncate text-base font-semibold tracking-tight text-slate-900 group-hover/card:text-teal-700">
                               {property.name}
                             </h3>
-                            <span className="inline-flex items-center rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/20">
+                            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/20">
                               {property.propertyType.label}
                             </span>
                             {!property.approved &&
@@ -569,9 +575,11 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
                                 </span>
                               ))}
                           </div>
-                          <p className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                            <span className="truncate">{formatOmanAddress(property)}</span>
+                          <p className="flex items-start gap-1.5 text-xs text-slate-500">
+                            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span className="line-clamp-2" title={formatOmanAddress(property)}>
+                              {formatOmanAddress(property)}
+                            </span>
                           </p>
                           {isAdmin && (
                             <p className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
@@ -586,30 +594,60 @@ export default async function PropertiesPage({ searchParams }: PageProps) {
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-5 border-t border-slate-100 pt-3 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-                        <div className="text-center">
-                          <p className="text-lg font-semibold leading-none text-slate-900">{total}</p>
-                          <p className="mt-1 text-[11px] font-medium text-slate-500">
-                            {property.propertyType.unitNounPlural}
-                          </p>
-                        </div>
-                        <div className="text-center">
-                          <p className="text-lg font-semibold leading-none text-slate-900">{occupied}</p>
-                          <p className="mt-1 text-[11px] font-medium text-slate-500">Occupied</p>
-                        </div>
-                        <div className="w-28">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[11px] font-medium text-slate-500">Occupancy</span>
-                            <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${occupancyTone.pill}`}>
-                              {pct}%
-                            </span>
+
+                        <div className="flex shrink-0 items-center gap-3 sm:pt-1">
+                          <div className="w-36">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-medium text-slate-500">Occupancy</span>
+                              <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${occupancyTone.pill}`}>
+                                {pct}%
+                              </span>
+                            </div>
+                            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                              <div className={`h-full rounded-full ${occupancyTone.bar}`} style={{ width: `${pct}%` }} />
+                            </div>
                           </div>
-                          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                            <div className={`h-full rounded-full ${occupancyTone.bar}`} style={{ width: `${pct}%` }} />
-                          </div>
+                          <ChevronRight className="hidden h-5 w-5 shrink-0 text-slate-400 transition-colors group-hover/card:text-teal-600 sm:block" />
                         </div>
-                        <ChevronRight className="hidden h-5 w-5 shrink-0 text-slate-400 transition-colors group-hover/card:text-teal-600 lg:block" />
                       </div>
+
+                      <dl
+                        className="flex flex-wrap gap-px overflow-hidden rounded-lg border border-slate-100 bg-slate-100"
+                      >
+                        <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                          <dt className="text-[11px] font-medium text-slate-500">
+                            {property.propertyType.unitNounPlural}
+                          </dt>
+                          <dd className="text-base font-semibold tabular-nums text-slate-900">{total}</dd>
+                        </div>
+                        <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                          <dt className="text-[11px] font-medium text-slate-500">Occupied</dt>
+                          <dd className="text-base font-semibold tabular-nums text-slate-900">
+                            {occupied}
+                            <span className="text-xs font-medium text-slate-400"> / {total}</span>
+                          </dd>
+                        </div>
+                        {space.totalSqm > 0 && (
+                          <>
+                            <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                              <dt className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-slate-500">
+                                Occupied area
+                              </dt>
+                              <dd className="text-base font-semibold tabular-nums text-slate-900">
+                                {formatSqm(space.occupiedSqm)}
+                              </dd>
+                            </div>
+                            <div className="min-w-[6.5rem] flex-1 basis-[6.5rem] bg-slate-50/70 px-2.5 py-2">
+                              <dt className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-slate-500">
+                                Vacant area
+                              </dt>
+                              <dd className="text-base font-semibold tabular-nums text-slate-900">
+                                {formatSqm(space.vacantSqm)}
+                              </dd>
+                            </div>
+                          </>
+                        )}
+                      </dl>
                     </div>
                   </article>
                 </Link>

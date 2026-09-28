@@ -5,7 +5,12 @@ import { FormMessage, Message } from "@/components/form-message";
 import { PageHeader } from "@/components/page-header";
 import { SubmitButton } from "@/components/submit-button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ADMIN_FEATURES, ADMIN_MODULES } from "@/lib/admin-modules";
+import {
+  ADMIN_DOWNLOAD_PERMISSIONS,
+  ADMIN_FEATURES,
+  ADMIN_MODULES,
+  ADMIN_PEOPLE_VISIBILITY,
+} from "@/lib/admin-modules";
 import { requireSuperAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { personDisplayName } from "@/lib/utils";
@@ -106,6 +111,72 @@ export default async function PermissionsPage({ searchParams }: PageProps) {
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {ADMIN_FEATURES.map((module) => (
+                          <label
+                            key={module.key}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              name="modules"
+                              value={module.key}
+                              defaultChecked={granted.has(module.key)}
+                              className="mt-0.5"
+                            />
+                            <span>
+                              <span className="block font-medium">{module.label}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                {module.description}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="space-y-1 border-t pt-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          People this admin can see
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Unticking a category hides it everywhere — the People list, and
+                          every dropdown across the app that picks a tenant, owner or
+                          worker (assigning a request, starting a tenancy, adding a
+                          person, and so on).
+                        </p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        {ADMIN_PEOPLE_VISIBILITY.map((module) => (
+                          <label
+                            key={module.key}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              name="modules"
+                              value={module.key}
+                              defaultChecked={granted.has(module.key)}
+                              className="mt-0.5"
+                            />
+                            <span>
+                              <span className="block font-medium">{module.label}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                {module.description}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="space-y-1 border-t pt-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Downloads
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Every "Download PDF" and "Download Excel" / "Export CSV"
+                          button across the app, gated separately. The report or
+                          statement itself stays visible either way — only the
+                          download button disappears.
+                        </p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {ADMIN_DOWNLOAD_PERMISSIONS.map((module) => (
                           <label
                             key={module.key}
                             className="flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-sm"

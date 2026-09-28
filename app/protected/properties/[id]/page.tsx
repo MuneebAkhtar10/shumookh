@@ -64,6 +64,7 @@ import {
 import { PendingLink } from "@/components/ui/pending-link";
 import { UnitManageModal } from "@/components/unit-manage-modal";
 import { toManagedUnit } from "@/lib/managed-unit";
+import { areaValue, computeSpaceStats, formatSqm } from "@/lib/unit-area";
 import { formatMoney, formatMoneyCompact } from "@/lib/finance";
 import { formatOmanAddress, OMAN_GOVERNORATES } from "@/lib/oman";
 import {
@@ -83,6 +84,7 @@ import { getRentPositionData } from "@/lib/rent-position";
 import { SummaryTile } from "@/components/summary-tile";
 import { cn, personDisplayName } from "@/lib/utils";
 import { prisma } from "@/lib/prisma";
+import { personVisibilityWhere, visiblePersonCategories } from "@/lib/permissions";
 import { requireAnyRole, isStaffAdmin } from "@/lib/session";
 import { adminAccess } from "@/lib/permissions";
 import { UserType } from "@/lib/generated/prisma/client";
@@ -144,6 +146,8 @@ export default async function PropertyDetailPage({
     contract?: string;
     charge?: string;
     occupancy?: string;
+    areaMin?: string;
+    areaMax?: string;
     q?: string;
   } & Message;
   const message = rawParams as Message;
@@ -157,10 +161,18 @@ export default async function PropertyDetailPage({
     typeof rawParams.occupancy === "string" ? rawParams.occupancy : "all";
   const search =
     typeof rawParams.q === "string" ? rawParams.q.trim() : "";
+  // Area range (m²). Blank / non-positive means "no bound".
+  const parseBound = (raw: unknown): number | null => {
+    const n = typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const areaMin = parseBound(rawParams.areaMin);
+  const areaMax = parseBound(rawParams.areaMax);
 
   const user = await requireAnyRole(UserType.admin, UserType.owner);
   const { can } = await adminAccess(user);
   const isAdmin = isStaffAdmin(user.userType);
+  const personWhere = personVisibilityWhere(await visiblePersonCategories(user));
   const isOwner = user.userType === UserType.owner;
 
   const property = await prisma.property.findUnique({
@@ -266,14 +278,14 @@ export default async function PropertyDetailPage({
     unbilledExpenses,
   ] = await Promise.all([
       prisma.user.findMany({
-        where: { userType: UserType.user, unit: null },
+        where: { AND: [{ userType: UserType.user, unit: null }, personWhere] },
         orderBy: { email: "asc" },
         select: { id: true, email: true, firstName: true, lastName: true },
       }),
       prisma.propertyType.findMany({ orderBy: { createdAt: "asc" } }),
       isAdmin
         ? prisma.user.findMany({
-            where: { userType: UserType.owner },
+            where: { AND: [{ userType: UserType.owner }, personWhere] },
             select: { id: true, email: true, firstName: true, lastName: true },
             orderBy: { email: "asc" },
           })
@@ -405,6 +417,9 @@ export default async function PropertyDetailPage({
       monthlyRent: Number(unit.tenancies[0].monthlyRent ?? 0),
     }));
   const occupied = property.units.filter((u) => u.tenant).length;
+  const space = computeSpaceStats(
+    property.units.map((u) => ({ areaSqm: u.areaSqm, tenantId: u.tenantId })),
+  );
   const scheduledMonthlyRent = property.units.reduce(
     (total, unit) => total + Number(unit.tenancies[0]?.monthlyRent ?? 0),
     0,
@@ -488,6 +503,9 @@ export default async function PropertyDetailPage({
     }
     if (occupancyFilter === "occupied" && !unit.tenant) return false;
     if (occupancyFilter === "empty" && unit.tenant) return false;
+    const unitArea = areaValue(unit.areaSqm);
+    if (areaMin !== null && (unitArea === null || unitArea < areaMin)) return false;
+    if (areaMax !== null && (unitArea === null || unitArea > areaMax)) return false;
     const tone = chargeToneFor(unit);
     if (chargeFilter === "due" && tone !== "overdue" && tone !== "dueSoon") {
       return false;
@@ -527,6 +545,8 @@ export default async function PropertyDetailPage({
     if (contract !== "all") query.set("contract", contract);
     if (charge !== "all") query.set("charge", charge);
     if (occupancy !== "all") query.set("occupancy", occupancy);
+    if (areaMin !== null) query.set("areaMin", String(areaMin));
+    if (areaMax !== null) query.set("areaMax", String(areaMax));
     const qs = query.toString();
     return `/protected/properties/${property.id}${qs ? `?${qs}` : ""}`;
   };
@@ -535,7 +555,12 @@ export default async function PropertyDetailPage({
     contractFilter !== "all" ||
     chargeFilter !== "all" ||
     occupancyFilter !== "all" ||
+    areaMin !== null ||
+    areaMax !== null ||
     Boolean(search);
+  const filteredSpace = computeSpaceStats(
+    displayedUnits.map((u) => ({ areaSqm: u.areaSqm, tenantId: u.tenantId })),
+  );
 
   // Shared between the summary tile's modal and the header's "Suppliers"
   // quick-link below — both open the same list, just triggered from two
@@ -714,6 +739,8 @@ export default async function PropertyDetailPage({
 <Tooltip label="Download the landlord statement — rent collected versus expenses for a tenancy.">
                 <RentStatementModal
                   options={activeStatementTenancies}
+                  canDownloadPdf={can("download_pdf")}
+                  canDownloadExcel={can("download_excel")}
                   trigger={
                     <Button
                       type="button"
@@ -1005,7 +1032,7 @@ export default async function PropertyDetailPage({
         <FormMessage message={message} />
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,21rem))] gap-3">
         <SummaryTile
           icon={<DoorOpen className="h-4 w-4" />}
           value={property.units.length}
@@ -1025,6 +1052,25 @@ export default async function PropertyDetailPage({
           value={`${occupied}/${property.units.length}`}
           label="Occupied"
           sublabel={`${property.units.length - occupied} empty`}
+          progress={space.unitsWithArea > 0 ? space.occupiedPct : undefined}
+          aside={
+            space.unitsWithArea > 0 ? (
+              <>
+                <p className="whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-teal-700">
+                  {formatSqm(space.occupiedSqm)}
+                  <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    occupied
+                  </span>
+                </p>
+                <p className="mt-0.5 whitespace-nowrap text-sm font-bold leading-tight tabular-nums text-slate-900">
+                  {formatSqm(space.vacantSqm)}
+                  <span className="ml-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    vacant
+                  </span>
+                </p>
+              </>
+            ) : undefined
+          }
           accent="bg-emerald-500"
           iconBg="bg-emerald-50 text-emerald-600"
           href={buildFilterHref({
@@ -1191,6 +1237,50 @@ export default async function PropertyDetailPage({
                     {chargeFilter !== "all" && (
                       <input type="hidden" name="charge" value={chargeFilter} />
                     )}
+                    <div className="w-32 space-y-1">
+                      <Label htmlFor="occupancy-filter" className="text-xs">
+                        Status
+                      </Label>
+                      <Select
+                        id="occupancy-filter"
+                        name="occupancy"
+                        defaultValue={occupancyFilter}
+                        className="h-8 text-xs"
+                      >
+                        <option value="all">All</option>
+                        <option value="occupied">Occupied</option>
+                        <option value="empty">Vacant</option>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="area-min" className="text-xs">
+                        Area (m²)
+                      </Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          id="area-min"
+                          name="areaMin"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={areaMin ?? ""}
+                          placeholder="Min"
+                          className="h-8 w-20 text-xs"
+                        />
+                        <span className="text-xs text-muted-foreground">–</span>
+                        <Input
+                          id="area-max"
+                          name="areaMax"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={areaMax ?? ""}
+                          placeholder="Max"
+                          className="h-8 w-20 text-xs"
+                          aria-label="Maximum area in square metres"
+                        />
+                      </div>
+                    </div>
                     <div className="min-w-48 flex-1 max-w-xs space-y-1">
                       <Label htmlFor="unit-search" className="text-xs">
                         Search
@@ -1260,6 +1350,28 @@ export default async function PropertyDetailPage({
                     </ButtonLink>
                   )}
                 </div>
+                {hasActiveFilter && (
+                  <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                    Showing{" "}
+                    <span className="font-bold text-foreground">
+                      {displayedUnits.length}
+                    </span>{" "}
+                    of {property.units.length}{" "}
+                    {propertyType.unitNounPlural.toLowerCase()} ·{" "}
+                    <span className="font-bold text-foreground">
+                      {formatSqm(filteredSpace.totalSqm)}
+                    </span>{" "}
+                    total ·{" "}
+                    <span className="font-bold text-teal-700">
+                      {formatSqm(filteredSpace.occupiedSqm)}
+                    </span>{" "}
+                    occupied ·{" "}
+                    <span className="font-bold text-foreground">
+                      {formatSqm(filteredSpace.vacantSqm)}
+                    </span>{" "}
+                    vacant
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}
@@ -1377,6 +1489,9 @@ export default async function PropertyDetailPage({
                                 : null,
                               hasBedrooms && unit.bedrooms
                                 ? `${unit.bedrooms} bed`
+                                : null,
+                              areaValue(unit.areaSqm) !== null
+                                ? formatSqm(areaValue(unit.areaSqm)!)
                                 : null,
                             ]
                               .filter(Boolean)
@@ -1534,13 +1649,15 @@ export default async function PropertyDetailPage({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="entitlements">Unit entitlement (m²)</Label>
+                      <Label htmlFor="gen-area">Area per unit (m²)</Label>
                       <Input
-                        id="entitlements"
-                        name="entitlements"
+                        id="gen-area"
+                        name="areaSqm"
                         type="number"
-                        min={0}
-                        placeholder="e.g. 70"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="e.g. 85.5"
+                        required
                       />
                     </div>
                   </div>
@@ -1639,15 +1756,17 @@ export default async function PropertyDetailPage({
                     </div>
                   )}
                   <div className="space-y-1.5">
-                    <Label htmlFor="add-unit-entitlements" className="text-xs">
-                      Unit entitlement (m²)
+                    <Label htmlFor="add-unit-area" className="text-xs">
+                      Area (m²)
                     </Label>
                     <Input
-                      id="add-unit-entitlements"
-                      name="entitlements"
+                      id="add-unit-area"
+                      name="areaSqm"
                       type="number"
-                      min={0}
-                      placeholder="e.g. 70"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="e.g. 85.5"
+                      required
                     />
                   </div>
                 </div>

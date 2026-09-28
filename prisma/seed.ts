@@ -214,6 +214,8 @@ async function main() {
           label: `${floor}${String(n).padStart(2, "0")}`,
           floor,
           bedrooms: (n % 3) + 1,
+          // Units are let by the m², so every unit carries an area.
+          areaSqm: 60 + ((n % 3) + 1) * 20,
         });
       }
     }
@@ -222,6 +224,16 @@ async function main() {
       data: units,
       skipDuplicates: true,
     });
+
+    // createMany skips units that already exist, so a re-run also fills in
+    // the area on fixtures created before units had one — same sizes as above
+    // (bedrooms 1/2/3 -> 80/100/120 m²). Only touches units still blank.
+    for (const bedrooms of [1, 2, 3]) {
+      await prisma.unit.updateMany({
+        where: { propertyId: property.id, areaSqm: null, bedrooms },
+        data: { areaSqm: 60 + bedrooms * 20 },
+      });
+    }
 
     console.log(
       `🏢 ${property.name}: ${count} apartment(s) added (${FLOORS * PER_FLOOR} total)`,

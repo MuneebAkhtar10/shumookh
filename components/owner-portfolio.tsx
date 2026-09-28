@@ -221,15 +221,17 @@ export function OwnerPortfolio({
                             )}
                           </div>
                           <div className="space-y-1.5">
-                            <Label htmlFor={`add-unit-ent-${property.id}`} className="text-xs">
-                              Unit entitlement (m²)
+                            <Label htmlFor={`add-unit-area-${property.id}`} className="text-xs">
+                              Area (m²)
                             </Label>
                             <Input
-                              id={`add-unit-ent-${property.id}`}
-                              name="entitlements"
+                              id={`add-unit-area-${property.id}`}
+                              name="areaSqm"
                               type="number"
-                              min={0}
-                              placeholder="e.g. 70"
+                              min="0.01"
+                              step="0.01"
+                              placeholder="e.g. 85.5"
+                              required
                             />
                           </div>
                           <SubmitButton

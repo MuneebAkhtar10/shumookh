@@ -57,6 +57,12 @@ enum AdminModule {
   prop_service_charge
   prop_collection_position
   prop_cash_flow
+  see_workers_in_house
+  see_workers_third_party
+  see_owners
+  see_tenants
+  download_pdf
+  download_excel
 }
 
 /// Only meaningful when userType = worker. Distinguishes staff employed by
@@ -327,6 +333,11 @@ model Unit {
   label                       String
   floor                       Int?
   bedrooms                    Int?
+  /// Rentable floor area in square metres. Some units are let by the m² —
+  /// this is what the occupied / vacant space reports add up. Null means
+  /// "not recorded yet" and is left out of those totals (and counted
+  /// separately so the gap is visible).
+  areaSqm                     Decimal?  @map("area_sqm") @db.Decimal(12, 2)
   /// The landlord this unit belongs to. Null means no owner is assigned yet
   /// (all units created before the owner role existed, and any an admin
   /// hasn't assigned). Set automatically to themselves when an owner adds
