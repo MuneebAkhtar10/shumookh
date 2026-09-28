@@ -91,8 +91,7 @@ export default async function RootLayout({
       <footer className="border-t border-border/60 py-6">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <p className="text-xs text-muted-foreground">
-            &copy; {new Date().getFullYear()} Shumookh. All rights
-            reserved.
+            &copy; {new Date().getFullYear()} AQA LLC. All rights reserved.
           </p>
         </div>
       </footer>
@@ -124,7 +123,7 @@ export default async function RootLayout({
       <footer className="border-t py-6">
         <div className="mx-auto max-w-6xl px-4">
           <p className="text-xs text-muted-foreground">
-            &copy; {new Date().getFullYear()} Shumookh. All rights reserved.
+            &copy; {new Date().getFullYear()} AQA LLC. All rights reserved.
           </p>
         </div>
       </footer>
